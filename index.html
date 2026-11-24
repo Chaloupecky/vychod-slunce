@@ -98,6 +98,7 @@
   .days{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;background:var(--card);border-radius:12px;padding:8px}
   .days[hidden]{display:none}
   .daychip{border:0;background:none;border-radius:9px;padding:6px 2px 7px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:13px;color:var(--mute)}
+  .daychip small{font-size:11px;color:var(--mute);font-weight:400;margin-top:-4px}
   .daychip.on{background:var(--fill);color:var(--ink);font-weight:600}
   .daychip b{font-size:15px;font-weight:700;color:#1c1c1e;min-width:40px;line-height:26px;border-radius:13px;font-variant-numeric:tabular-nums}
   .daychip b.na{background:var(--fill);color:var(--mute)}
@@ -721,7 +722,8 @@ if (typeof document !== 'undefined') (function () {
     [...sel.options].forEach((o, d) => {
       const b = document.createElement('button'), sc = sel.value === o.value && bestNow !== null ? bestNow : days[d];
       b.type = 'button'; b.className = 'daychip' + (sel.value === o.value ? ' on' : '');
-      b.innerHTML = o.textContent[0].toUpperCase() + o.textContent.slice(1) + (sc == null ? '<b class="na">?</b>' : '<b class="' + qClass(sc) + '">' + sc + '</b>');
+      const date = new Intl.DateTimeFormat('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', timeZone: center.tz }).format(new Date(Date.now() + d * 86400000));
+      b.innerHTML = o.textContent[0].toUpperCase() + o.textContent.slice(1) + '<small>' + date + '</small>' + (sc == null ? '<b class="na">?</b>' : '<b class="' + qClass(sc) + '">' + sc + '</b>');
       b.onclick = () => { sel.value = o.value; run(); };
       box.appendChild(b);
     });
@@ -820,12 +822,13 @@ if (typeof document !== 'undefined') (function () {
     const daySel = $('day'), dayTxt = daySel.selectedOptions[0].textContent;
     const best = all.reduce((a, b) => b.score > a.score ? b : a).score, fog = results.find(r => r.seaBelow);
     bestNow = best; if (lastDays) showOutlook(lastDays);
-    const rise = (set ? 'Slunce zapadá v ' : 'Slunce vychází v ') + fmtTime(sun.ms) + '. ', W = set ? 'Západ ' : 'Východ ';
+    const dateTxt = new Intl.DateTimeFormat('cs-CZ', { weekday: 'long', day: 'numeric', month: 'numeric', timeZone: center.tz }).format(new Date(sun.ms));
+    const rise = dateTxt[0].toUpperCase() + dateTxt.slice(1) + ', ' + (set ? 'slunce zapadá v ' : 'slunce vychází v ') + fmtTime(sun.ms) + '. ', W = set ? 'Západ ' : 'Východ ';
     let head, sub, flat = false;
     if (best >= 75) { head = W + dayTxt + (set ? ' stojí za výlet' : ' stojí za budík'); sub = rise + (fog ? 'Je inverze: mlha asi do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto. ' : ''); }
     else if (best >= 55) { head = W + dayTxt + ' vypadá slušně'; sub = rise; }
     else if (best >= 35) { head = W + dayTxt + ' bude spíš průměrný'; sub = rise + 'Slunce nejspíš uvidíš, ale barvy budou slabší. Jiný den nebo jiné místo může vyjít líp.'; }
-    else { head = 'Na hezký ' + (set ? 'západ' : 'východ') + ' to tu ' + dayTxt + ' nevypadá'; sub = 'Podle předpovědi bude zataženo nebo mlha. Mrkni níž na další dny, nebo zkus jiné místo. Na podzim a v zimě to často bývá nízká oblačnost, nad kterou je na horách jasno.'; flat = true; }
+    else { head = 'Na hezký ' + (set ? 'západ' : 'východ') + ' to tu ' + dayTxt + ' nevypadá'; sub = rise + 'Podle předpovědi bude zataženo nebo mlha. Mrkni níž na další dny, nebo zkus jiné místo. Na podzim a v zimě to často bývá nízká oblačnost, nad kterou je na horách jasno.'; flat = true; }
     const jump = results.length && !flat;
     $('listlabel').hidden = !results.length;
     $('verdict').innerHTML = '<button class="verdict' + (jump ? '' : ' flat') + '" id="vbtn"><b>' + head + '</b><span>' + sub + '</span>' + (jump ? '<i>Ukázat místo č. 1</i>' : '') + '</button>';
