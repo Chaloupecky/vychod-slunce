@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Najde kopce a vyhlídky v okolí, kde bude zítra hezký východ slunce. Zdarma, podle předpovědi počasí.">
+<title>Kde bude hezký východ slunce</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<script src="vendor/leaflet.js"></script>
+<style>
+  :root{--bg:#12141a;--panel:#1b1e27;--line:#2c3040;--text:#eceef4;--mute:#9aa1b5;--acc:#ffb347}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+  header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+  header h1{font-size:17px;margin:0 12px 6px 0;font-weight:650;white-space:nowrap}
+  label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:3px}
+  input,select,button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+  input{width:190px}
+  button{background:var(--acc);color:#221500;border-color:var(--acc);font-weight:650;cursor:pointer}
+  button:disabled{opacity:.5;cursor:wait}
+  main{flex:1;display:flex;min-height:0}
+  #side{width:380px;max-width:100%;overflow:auto;border-right:1px solid var(--line);padding:14px 16px}
+  #map{flex:1;min-height:320px;background:#0d0f14}
+  #status{color:var(--mute);font-size:13px;margin:0 0 10px}
+  #status.err{color:#ff8a80}
+  .verdict{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px;background:var(--panel)}
+  .verdict b{font-size:18px;display:block;margin-bottom:4px}
+  .facts{color:var(--mute);font-size:13px;margin:0;padding:0;list-style:none}
+  .facts li{margin:2px 0}
+  ol#list{list-style:none;margin:0;padding:0}
+  ol#list li{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;display:grid;grid-template-columns:46px 1fr;gap:10px;align-items:start}
+  ol#list li:hover{border-color:var(--acc)}
+  .sc{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#111;font-size:16px}
+  .nm{font-weight:650}
+  .meta{color:var(--mute);font-size:12.5px}
+  .why{font-size:13px;margin-top:3px}
+  .pin{border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font:700 12px system-ui;color:#111;border:2px solid #111;box-shadow:0 1px 4px #0008}
+  .note{color:var(--mute);font-size:12px;margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+  a{color:var(--acc)}
+  .leaflet-popup-content{font:13px/1.4 system-ui;color:#111}
+  @media (max-width:820px){main{flex-direction:column-reverse}#side{width:100%;border-right:0;border-top:1px solid var(--line);max-height:55%}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌅 Kde bude hezký východ slunce</h1>
+  <label>Místo (nebo klikni do mapy)
+    <input id="place" value="Kolín" autocomplete="off">
+  </label>
+  <label>Okruh
+    <select id="radius"><option value="25">25 km</option><option value="50" selected>50 km</option><option value="75">75 km</option></select>
+  </label>
+  <label>Den
+    <select id="day"><option value="0">dnes</option><option value="1" selected>zítra</option><option value="2">pozítří</option><option value="3">za 3 dny</option></select>
+  </label>
+  <button id="go">Najít místa</button>
+</header>
+<main>
+  <section id="side">
+    <p id="status">Načítám…</p>
+    <div id="verdict"></div>
+    <ol id="list"></ol>
+    <p class="note">Skóre je odhad z předpovědi počasí (Open-Meteo) a míst z OpenStreetMap. Mlhu a inverzi modely trefují jen zhruba a neví, jestli na vrcholu nestojí les, takže ráno před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
+  </section>
+  <div id="map"><p id="mapnote" style="padding:20px;color:#9aa1b5">Mapa se načítá… Pokud tu tenhle text zůstane, stránka běží v náhledu, který nepovolí skripty. Otevři ji v normálním prohlížeči.</p></div>
+</main>
+
+<script>
+// ==CORE-START==
+const EARTH = 6371000, RAD = Math.PI / 180;
+const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700];
+
+function sunPos(ms, lat, lon) {
+  const d = ms / 86400000 + 2440587.5 - 2451545.0;
+  const g = (357.529 + 0.98560028 * d) * RAD;
+  const q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * RAD;
+  const e = (23.439 - 0.00000036 * d) * RAD;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) * 15;
+  const ha = (gmst + lon) * RAD - ra;
+  const la = lat * RAD;
+  const alt = Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(ha));
+  let az = Math.atan2(-Math.sin(ha), Math.tan(dec) * Math.cos(la) - Math.sin(la) * Math.cos(ha)) / RAD;
+  return { alt: alt / RAD, az: (az + 360) % 360 };
+}
+
+// first upward crossing of the horizon within 26 h after startMs
+function findSunrise(startMs, lat, lon) {
+  const H0 = -0.833, step = 300000;
+  let prev = sunPos(startMs, lat, lon).alt;
+  for (let t = startMs + step; t <= startMs + 26 * 3600000; t += step) {
+    const a = sunPos(t, lat, lon).alt;
+    if (prev < H0 && a >= H0) {
+      let lo = t - step, hi = t;
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2;
+        if (sunPos(mid, lat, lon).alt < H0) lo = mid; else hi = mid;
+      }
+      return { ms: hi, az: sunPos(hi, lat, lon).az };
+    }
+    prev = a;
+  }
+  return null;
+}
+
+function dest(lat, lon, azDeg, dist) {
+  const a = azDeg * RAD, dr = dist / EARTH, la = lat * RAD, lo = lon * RAD;
+  const la2 = Math.asin(Math.sin(la) * Math.cos(dr) + Math.cos(la) * Math.sin(dr) * Math.cos(a));
+  const lo2 = lo + Math.atan2(Math.sin(a) * Math.sin(dr) * Math.cos(la), Math.cos(dr) - Math.sin(la) * Math.sin(la2));
+  return { lat: la2 / RAD, lon: lo2 / RAD };
+}
+
+function distKm(a, b) {
+  const dla = (b.lat - a.lat) * RAD, dlo = (b.lon - a.lon) * RAD;
+  const h = Math.sin(dla / 2) ** 2 + Math.cos(a.lat * RAD) * Math.cos(b.lat * RAD) * Math.sin(dlo / 2) ** 2;
+  return 2 * EARTH * Math.asin(Math.sqrt(h)) / 1000;
+}
+
+// relative humidity at height z from a profile sorted by height
+function rhAt(profile, z) {
+  if (!profile.length) return null;
+  if (z <= profile[0].h) return profile[0].rh;
+  for (let i = 1; i < profile.length; i++) {
+    if (z <= profile[i].h) {
+      const p = profile[i - 1], n = profile[i], f = (z - p.h) / (n.h - p.h);
+      return p.rh + f * (n.rh - p.rh);
+    }
+  }
+  return profile[profile.length - 1].rh;
+}
+
+// largest angle (deg) the terrain rises above the viewer's eye line towards the sunrise
+function terrainAngle(eyeH, samples) {
+  let max = -90;
+  for (const s of samples) {
+    const drop = s.d * s.d / (2 * EARTH);
+    const ang = Math.atan((s.h - drop - eyeH) / s.d) / RAD;
+    if (ang > max) max = ang;
+  }
+  return max;
+}
+
+function colourScore(high, mid) {
+  const x = Math.min(100, high + 0.5 * mid);
+  if (x <= 10) return 35 + x * 2;
+  if (x <= 30) return 55 + (x - 10) * 2.25;
+  if (x <= 65) return 100;
+  return 100 - (x - 65) * 2;
+}
+
+/* spot: {ele, tower}; wx: {low,mid,high,vis,gust,precip,rh2m,profile:[{h,rh}]}
+   horizon: [{low,mid}] along the sunrise direction; tAngle: degrees */
+function analyse(spot, wx, horizon, tAngle) {
+  const SAT = 92, ele = spot.ele;
+  const prof = wx.profile;
+  const below = prof.filter(p => p.h < ele - 50 && p.rh >= SAT);
+  const above = prof.filter(p => p.h > ele + 150 && p.h < ele + 2500 && p.rh >= SAT);
+  const rhHere = rhAt(prof, ele + 60);
+  // humid air alone is not fog: the model also has to show low cloud or poor visibility
+  const murky = wx.low >= 30 || wx.vis < 5000;
+  const deckAbove = above.length > 0 && wx.low >= 30;
+  const seaBelow = below.length > 0 && murky && !deckAbove && rhHere !== null && rhHere < 80;
+  const fogTop = seaBelow ? Math.max(...below.map(p => p.h)) : null;
+  const inFog = !seaBelow && ((rhHere !== null && rhHere >= 94 && murky) || (wx.rh2m >= 97 && wx.vis < 2000) || wx.vis < 800);
+
+  let lowBlock = inFog ? 100 : seaBelow ? 0 : wx.low;
+  if (deckAbove) lowBlock = Math.max(lowBlock, wx.low, 60);
+
+  let hz = 0;
+  for (const h of horizon) hz = Math.max(hz, h.low * (seaBelow ? 0.4 : 1), h.mid * 0.6);
+
+  const colour = colourScore(wx.high, wx.mid);
+  const visible = (1 - lowBlock / 100) * (1 - hz / 100);
+  let s = 100 * Math.pow(visible, 0.7) * (0.5 + 0.5 * colour / 100);
+  if (wx.mid > 70) s *= 1 - (wx.mid - 70) / 30 * 0.4;
+  if (seaBelow) s += 20 * visible;
+
+  const why = [];
+  if (inFog) why.push('nejspíš budeš stát v mlze');
+  else if (seaBelow) why.push('nad inverzí, mlha asi do ' + Math.round(fogTop / 50) * 50 + ' m');
+  else if (lowBlock >= 60) why.push('nízká oblačnost nad tebou');
+  else if (lowBlock <= 20) why.push('nad tebou čisto');
+  if (!inFog) {
+    if (hz >= 60) why.push('obzor na východě zavřený mraky');
+    else if (hz <= 25) why.push('čistý obzor');
+    else why.push('obzor napůl');
+    const hm = wx.high + 0.5 * wx.mid;
+    if (hm >= 30 && hm <= 65 && wx.mid <= 70) why.push('vysoká oblačnost na barvy');
+    else if (hm < 10) why.push('skoro bez mraků, čistý ale míň barevný');
+    else if (hm > 85 || wx.mid > 70) why.push('moc husté mraky, spíš šedo');
+  }
+  if (tAngle > 2.5) { s -= 45; why.push('výhled na východ kryje terén'); }
+  else if (tAngle > 1) { s -= 25; why.push('slunce vyleze později zpoza kopce'); }
+  else if (tAngle > 0.3) { s -= 10; }
+  if (wx.gust > 65) { s -= 25; why.push('silný vítr, nárazy ' + Math.round(wx.gust) + ' km/h'); }
+  else if (wx.gust > 45) { s -= 10; why.push('fouká, nárazy ' + Math.round(wx.gust) + ' km/h'); }
+  if (wx.precip > 0.3) { s = Math.min(s, 15); why.push('srážky'); }
+  if (inFog) s = Math.min(s, 6);
+  s = Math.max(0, Math.min(100, Math.round(s)));
+  return { score: s, why, seaBelow, inFog, fogTop, colour: Math.round(colour), horizonBlock: Math.round(hz) };
+}
+
+function grade(s) { return s >= 75 ? 'výborný' : s >= 55 ? 'dobrý' : s >= 35 ? 'průměr' : 'slabý'; }
+
+// keep a spread of the highest spots: per ~8 km cell the top peaks and lookouts
+function selectSpots(cands, max) {
+  const cells = new Map();
+  for (const c of cands) {
+    const key = Math.round(c.lat / 0.07) + ':' + Math.round(c.lon / 0.11);
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(c);
+  }
+  let out = [];
+  for (const arr of cells.values()) {
+    const look = arr.filter(c => c.kind !== 'peak').sort((a, b) => b.ele - a.ele).slice(0, 2);
+    const peaks = arr.filter(c => c.kind === 'peak').sort((a, b) => b.ele - a.ele).slice(0, 2);
+    out.push(...look, ...peaks);
+  }
+  if (out.length > max) {
+    out.sort((a, b) => (b.kind !== 'peak') - (a.kind !== 'peak') || b.ele - a.ele);
+    const look = out.filter(c => c.kind !== 'peak').slice(0, Math.floor(max / 2));
+    const peaks = out.filter(c => c.kind === 'peak').slice(0, max - look.length);
+    out = [...look, ...peaks];
+  }
+  return out;
+}
+
+// summits of an elevation raster: highest pixel within `win` px, standing `minProm` m above a ring 2*win px away
+function rasterMaxima(E, W, H, win, minProm) {
+  const out = [];
+  for (let by = win * 2; by < H - win * 3; by += win) for (let bx = win * 2; bx < W - win * 3; bx += win) {
+    let mx = -1e9, mi = 0, mj = 0;
+    for (let y = by; y < by + win; y++) for (let x = bx; x < bx + win; x++) { const v = E[y * W + x]; if (v > mx) { mx = v; mi = x; mj = y; } }
+    let top = true;
+    for (let y = mj - win; y <= mj + win && top; y++) for (let x = mi - win; x <= mi + win; x++) if (E[y * W + x] > mx) { top = false; break; }
+    if (!top) continue;
+    let sum = 0;
+    for (let a = 0; a < 16; a++) sum += E[Math.round(mj + 2 * win * Math.sin(a * Math.PI / 8)) * W + Math.round(mi + 2 * win * Math.cos(a * Math.PI / 8))];
+    if (mx - sum / 16 >= minProm) out.push({ x: mi, y: mj, ele: mx, prom: mx - sum / 16 });
+  }
+  return out;
+}
+
+// terrain summits + named places: a named peak within `nearKm` takes over the summit, lookouts and towers are added
+function mergePlaces(dem, places, nearKm) {
+  const out = dem.map(d => ({ ...d }));
+  for (const o of places) {
+    if (o.kind !== 'peak') { out.push({ ...o }); continue; }
+    let best = null, bd = nearKm;
+    for (const d of out) { if (!d.unnamed) continue; const k = distKm(d, o); if (k < bd) { bd = k; best = d; } }
+    if (best) { best.name = o.name; best.unnamed = false; best.ele = Math.max(best.ele, o.ele); }
+    else out.push({ ...o });
+  }
+  return out;
+}
+// ==CORE-END==
+
+if (typeof document !== 'undefined') (function () {
+  const $ = id => document.getElementById(id);
+  const MAX_SPOTS = 60, H_DIST = [40000, 90000, 150000];
+  let center = { lat: 50.0281, lon: 15.2006, name: 'Kolín', tz: 'Europe/Prague', typed: 'Kolín' };
+  const spotCache = new Map();
+  let layer = null, sunLine = null, circle = null, markers = [], runToken = 0, shown = [];
+
+  if (typeof L === 'undefined') { $('mapnote').textContent = 'Nepodařilo se načíst mapovou knihovnu. Zkus stránku obnovit.'; return; }
+  $('mapnote').remove();
+  const map = L.map('map').setView([center.lat, center.lon], 10);
+  window.addEventListener('resize', () => map.invalidateSize());
+  setTimeout(() => map.invalidateSize(), 300);
+  const tiles = [
+    ['https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', '© OpenStreetMap, © CARTO'],
+    ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', '© OpenStreetMap, © OpenTopoMap'],
+    ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap']
+  ];
+  let tileIdx = 0, tileErr = 0;
+  function useTiles(i) {
+    if (layer) map.removeLayer(layer);
+    tileErr = 0;
+    layer = L.tileLayer(tiles[i][0], { attribution: tiles[i][1], maxZoom: 16 }).addTo(map);
+    layer.on('tileerror', () => { if (++tileErr === 6 && tileIdx < tiles.length - 1) useTiles(++tileIdx); });
+  }
+  useTiles(0);
+  map.on('click', e => {
+    center = { lat: e.latlng.lat, lon: e.latlng.lng, name: 'bod v mapě', tz: center.tz, typed: null };
+    $('place').value = e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4);
+    run();
+  });
+
+  function status(t, err) { $('status').textContent = t; $('status').className = err ? 'err' : ''; }
+  async function getJSON(url, opts, ms) {
+    const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), ms || 30000);
+    try {
+      const r = await fetch(url, { ...(opts || {}), signal: ctl.signal });
+      if (r.status === 429) throw new Error('Server s počasím hlásí moc dotazů najednou. Počkej minutu a zkus to znovu.');
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' z ' + new URL(url).host);
+      return await r.json();
+    } catch (e) {
+      throw e.name === 'AbortError' ? new Error(new URL(url).host + ' neodpovídá') : e;
+    } finally { clearTimeout(tm); }
+  }
+  const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+  const f4 = x => x.toFixed(4);
+  const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+  const areaKey = r => f4(center.lat) + ',' + f4(center.lon) + ',' + r;
+
+  async function resolvePlace() {
+    const txt = $('place').value.trim();
+    if (!txt || txt === center.typed) return;
+    const m = txt.match(/^(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)$/);
+    if (m) {
+      if (Math.abs(+m[1] - center.lat) > 1e-4 || Math.abs(+m[2] - center.lon) > 1e-4)
+        center = { lat: +m[1], lon: +m[2], name: 'bod v mapě', tz: center.tz, typed: null };
+      return;
+    }
+    const j = await getJSON('https://geocoding-api.open-meteo.com/v1/search?count=1&language=cs&format=json&name=' + encodeURIComponent(txt));
+    if (!j.results || !j.results.length) throw new Error('Místo „' + txt + '“ jsem nenašel.');
+    const r = j.results[0];
+    center = { lat: r.latitude, lon: r.longitude, name: r.name, tz: r.timezone || center.tz, typed: txt };
+  }
+
+  // ---- terrain from free elevation tiles: no key and no request limit ----
+  function loadTile(z, x, y) {
+    return new Promise((ok, bad) => {
+      const im = new Image(); im.crossOrigin = 'anonymous';
+      im.onload = () => {
+        const c = document.createElement('canvas'); c.width = c.height = 256;
+        const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
+        ok(g.getImageData(0, 0, 256, 256).data);
+      };
+      im.onerror = () => bad(new Error('Nepodařilo se načíst výškovou mapu. Zkontroluj připojení a zkus to znovu.'));
+      im.src = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/' + z + '/' + x + '/' + y + '.png';
+    });
+  }
+  async function loadTerrain(radiusKm) {
+    const z = radiusKm > 50 ? 8 : 9, n = 2 ** z, pad = radiusKm + 17;
+    const dLa = pad / 111.2, dLo = pad / (111.2 * Math.cos(center.lat * RAD));
+    const tx = lon => (lon + 180) / 360 * n;
+    const ty = lat => (1 - Math.log(Math.tan(lat * RAD) + 1 / Math.cos(lat * RAD)) / Math.PI) / 2 * n;
+    const x0 = Math.floor(tx(center.lon - dLo)), x1 = Math.floor(tx(center.lon + dLo));
+    const y0 = Math.floor(ty(center.lat + dLa)), y1 = Math.floor(ty(center.lat - dLa));
+    const W = (x1 - x0 + 1) * 256, H = (y1 - y0 + 1) * 256, E = new Float32Array(W * H);
+    const jobs = [];
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) jobs.push(loadTile(z, x, y).then(d => {
+      const ox = (x - x0) * 256, oy = (y - y0) * 256;
+      for (let r = 0; r < 256; r++) for (let c = 0; c < 256; c++) {
+        const k = (r * 256 + c) * 4;
+        E[(oy + r) * W + ox + c] = d[k] * 256 + d[k + 1] + d[k + 2] / 256 - 32768;
+      }
+    }));
+    await Promise.all(jobs);
+    const T = { E, W, H, pxSize: 40075016 * Math.cos(center.lat * RAD) / (256 * n) };
+    T.xy = (lat, lon) => [Math.max(0, Math.min(W - 1, Math.floor((tx(lon) - x0) * 256))), Math.max(0, Math.min(H - 1, Math.floor((ty(lat) - y0) * 256)))];
+    T.at = (lat, lon) => { const [x, y] = T.xy(lat, lon); return E[y * W + x]; };
+    T.top = (lat, lon) => { const [x, y] = T.xy(lat, lon); let m = -1e9;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const v = E[Math.max(0, Math.min(H - 1, y + a)) * W + Math.max(0, Math.min(W - 1, x + b))]; if (v > m) m = v; } return m; };
+    T.ll = (x, y) => ({ lon: ((x + 0.5) / 256 + x0) / n * 360 - 180, lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * ((y + 0.5) / 256 + y0) / n))) / RAD });
+    return T;
+  }
+
+  // ---- names from OpenStreetMap: nice to have, the public servers are often slow ----
+  async function osmPlaces(radiusKm) {
+    const dLa = radiusKm / 111.2, dLo = radiusKm / (111.2 * Math.cos(center.lat * RAD)), c0 = { ...center };
+    const bb = [c0.lat - dLa, c0.lon - dLo, c0.lat + dLa, c0.lon + dLo].map(f4).join(',');
+    const q = '[out:json][timeout:50][bbox:' + bb + '];(node["natural"="peak"]["name"];node["tourism"="viewpoint"]["name"];' +
+      'nwr["man_made"="tower"]["tower:type"="observation"];);out center tags;';
+    const hosts = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+    const j = await Promise.any(hosts.map(h => getJSON(h, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 70000)));
+    return j.elements.map(e => {
+      const t = e.tags || {}, lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+      const kind = t.natural === 'peak' ? 'peak' : t.man_made === 'tower' ? 'tower' : 'view';
+      const ele = parseFloat(String(t.ele || '').replace(',', '.'));
+      return { lat, lon, kind, name: t.name || (kind === 'tower' ? 'Rozhledna' : 'Vyhlídka'), ele: isFinite(ele) ? ele : null };
+    }).filter(c => c.lat != null && distKm(c0, c) <= radiusKm);
+  }
+  function savedPlaces(key) {
+    try { const s = JSON.parse(localStorage.getItem('osm:' + key)); if (s && Date.now() - s.at < 60 * 86400000) return s.list; } catch (e) {}
+    return null;
+  }
+
+  async function findSpots(radiusKm, token) {
+    const key = areaKey(radiusKm);
+    if (spotCache.has(key) && spotCache.get(key).named) return spotCache.get(key);
+    status('Načítám výškovou mapu a hledám kopce v okruhu ' + radiusKm + ' km…');
+    const T = spotCache.has(key) ? spotCache.get(key).T : await loadTerrain(radiusKm);
+    const win = Math.max(3, Math.round(900 / T.pxSize));
+    const dem = rasterMaxima(T.E, T.W, T.H, win, 15).map(m => ({ ...T.ll(m.x, m.y), ele: m.ele, prom: m.prom }))
+      .filter(c => distKm(center, c) <= radiusKm).sort((a, b) => b.prom - a.prom).slice(0, 200)
+      .map(c => ({ lat: c.lat, lon: c.lon, ele: c.ele, kind: 'peak', name: 'Kopec ' + Math.round(c.ele) + ' m', unnamed: true }));
+
+    let places = savedPlaces(key);
+    if (!places) {
+      const p = osmPlaces(radiusKm).then(list => {
+        try { localStorage.setItem('osm:' + key, JSON.stringify({ at: Date.now(), list })); } catch (e) {}
+        return list;
+      });
+      p.then(list => lateNames(list, key, token)).catch(() => {});
+      places = await Promise.race([p.catch(() => null), sleep(7000).then(() => null)]);
+    }
+    const cands = places ? mergePlaces(dem, places.map(o => ({ ...o, ele: o.ele ?? T.top(o.lat, o.lon) })), 0.7) : dem;
+    let minEle = 1e9;
+    for (let i = 0; i < T.E.length; i += 97) if (T.E[i] < minEle) minEle = T.E[i];
+    const res = { spots: selectSpots(cands, MAX_SPOTS), minEle, total: cands.length, named: !!places, T };
+    spotCache.set(key, res);
+    return res;
+  }
+
+  // names arrived after the results were already on screen: label what is shown, use the full list next time
+  function lateNames(list, key, token) {
+    if (spotCache.has(key)) spotCache.get(key).named = false;
+    if (token !== runToken) return;
+    let hit = 0;
+    for (const r of shown) {
+      if (r.kind !== 'peak') continue;
+      let best = null, bd = 0.7;
+      for (const o of list) { if (o.kind !== 'peak') continue; const d = distKm(r, o); if (d < bd) { bd = d; best = o; } }
+      if (best) { rename(r, best.name); hit++; }
+    }
+    if (hit) status($('status').textContent.replace(/ Názvy.*$/, '') + ' Názvy kopců doplněny; rozhledny a vyhlídky se přidají při dalším hledání.');
+  }
+  function rename(r, name) {
+    r.name = name; r.unnamed = false;
+    if (r._nm) r._nm.textContent = name;
+    if (r._marker) r._marker.setPopupContent(r._popup());
+  }
+  // until the real names arrive, describe the top spots by the nearest village (one request a second)
+  async function nameTop(results, token) {
+    for (const r of results.filter(r => r.unnamed).slice(0, 8)) {
+      if (token !== runToken) return;
+      try {
+        const j = await getJSON('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=13&accept-language=cs&lat=' + f4(r.lat) + '&lon=' + f4(r.lon), null, 8000);
+        const a = j.address || {}, place = a.village || a.town || a.hamlet || a.city || a.municipality || a.suburb;
+        if (place && token === runToken && r.unnamed) rename(r, 'Kopec ' + Math.round(r.ele) + ' m u obce ' + place);
+      } catch (e) {}
+      await sleep(1100);
+    }
+  }
+
+  async function weather(pts, dateStr, withProfile) {
+    let vars = 'cloud_cover_low,cloud_cover_mid,cloud_cover_high';
+    if (withProfile) vars += ',visibility,wind_gusts_10m,precipitation,relative_humidity_2m,temperature_2m,' +
+      LEVELS.map(l => 'relative_humidity_' + l + 'hPa,geopotential_height_' + l + 'hPa').join(',');
+    const out = [];
+    for (const part of chunk(pts, 30)) {
+      const j = await getJSON('https://api.open-meteo.com/v1/forecast?latitude=' + part.map(p => f4(p.lat)).join(',') +
+        '&longitude=' + part.map(p => f4(p.lon)).join(',') + '&hourly=' + vars +
+        '&start_date=' + dateStr + '&end_date=' + dateStr + '&timezone=GMT');
+      out.push(...(Array.isArray(j) ? j : [j]));
+    }
+    return out;
+  }
+
+  function colourFor(s) { return 'hsl(' + Math.round(s * 1.2) + ',78%,52%)'; }
+  function fmtTime(ms) { return new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', timeZone: center.tz }).format(new Date(ms)); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+  async function run() {
+    const btn = $('go'); btn.disabled = true;
+    $('verdict').innerHTML = ''; $('list').innerHTML = '';
+    const token = ++runToken;
+    try {
+      status('Hledám místo…');
+      await resolvePlace();
+      const radiusKm = +$('radius').value, dayOff = +$('day').value;
+
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: center.tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-').map(Number);
+      const startMs = Date.UTC(parts[0], parts[1] - 1, parts[2] + dayOff) - center.lon / 15 * 3600000;
+      const sun = findSunrise(startMs, center.lat, center.lon);
+      if (!sun) throw new Error('Ten den tu slunce nevychází (polární den nebo noc).');
+      const hourMs = Math.round(sun.ms / 3600000) * 3600000;
+      const dateStr = new Date(sun.ms).toISOString().slice(0, 10);
+      const hIdx = new Date(hourMs).toISOString().slice(0, 10) === dateStr ? new Date(hourMs).getUTCHours() : 23;
+
+      const { spots, minEle, total, named, T } = await findSpots(radiusKm, token);
+      if (!spots.length) throw new Error('V okruhu jsem nenašel žádný výraznější kopec. Zkus větší okruh.');
+
+      status('Stahuju předpověď počasí pro ' + spots.length + ' míst…');
+      const hPts = H_DIST.map(d => dest(center.lat, center.lon, sun.az, d));
+      const [wxAll, hzAll] = await Promise.all([weather(spots, dateStr, true), weather(hPts, dateStr, false)]);
+      const horizon = hzAll.map(j => ({ low: j.hourly.cloud_cover_low[hIdx] ?? 0, mid: j.hourly.cloud_cover_mid[hIdx] ?? 0 }));
+
+      const results = spots.map((s0, i) => {
+        const s = { ...s0 }, h = wxAll[i].hourly, v = k => h[k] ? h[k][hIdx] : null;
+        const profile = LEVELS.map(l => ({ h: v('geopotential_height_' + l + 'hPa'), rh: v('relative_humidity_' + l + 'hPa') }))
+          .filter(p => p.h !== null && p.rh !== null && p.h >= minEle - 50).sort((a, b) => a.h - b.h);
+        const wx = { low: v('cloud_cover_low') ?? 0, mid: v('cloud_cover_mid') ?? 0, high: v('cloud_cover_high') ?? 0,
+          vis: v('visibility') ?? 20000, gust: v('wind_gusts_10m') ?? 0, precip: v('precipitation') ?? 0,
+          rh2m: v('relative_humidity_2m') ?? 0, t: v('temperature_2m'), profile };
+        const samples = [];
+        for (let d = 600; d <= 15000; d += 300) { const p = dest(s.lat, s.lon, sun.az, d); samples.push({ d, h: T.at(p.lat, p.lon) }); }
+        const eye = s.ele + (s.kind === 'tower' ? 20 : 2);
+        return { ...s, wx, ...analyse(s, wx, horizon, terrainAngle(eye, samples)), km: distKm(center, s) };
+      }).sort((a, b) => b.score - a.score || a.km - b.km);
+
+      if (token !== runToken) return;
+      render(results, sun, radiusKm, horizon);
+      status('Hotovo: ' + results.length + ' míst z ' + total + ' nalezených, seřazeno od nejlepšího, při shodě bližší dřív.' +
+        (named ? '' : ' Názvy míst se ještě načítají, zatím jsou to kopce z výškové mapy.'));
+      if (!named) nameTop(results, token);
+    } catch (e) {
+      status(e.message || String(e), true);
+    } finally { btn.disabled = false; }
+  }
+
+  function render(results, sun, radiusKm, horizon) {
+    shown = results;
+    markers.forEach(m => map.removeLayer(m)); markers = [];
+    if (sunLine) map.removeLayer(sunLine);
+    if (circle) map.removeLayer(circle);
+    circle = L.circle([center.lat, center.lon], { radius: radiusKm * 1000, color: '#ffb347', weight: 1, fill: false, dashArray: '4 6' }).addTo(map);
+    const far = dest(center.lat, center.lon, sun.az, radiusKm * 1000);
+    sunLine = L.polyline([[center.lat, center.lon], [far.lat, far.lon]], { color: '#ffb347', weight: 2 }).addTo(map)
+      .bindTooltip('směr východu slunce (' + Math.round(sun.az) + '°)');
+    map.fitBounds(circle.getBounds());
+
+    const best = results[0], good = results.filter(r => r.score >= 55).length;
+    const arrive = fmtTime(sun.ms - 35 * 60000), fog = results.find(r => r.seaBelow);
+    const head = best.score >= 75 ? 'Tohle stojí za budík' : best.score >= 55 ? 'Vypadá to slušně' : best.score >= 35 ? 'Nic moc, spíš průměr' : 'Tenhle den to nestojí za to';
+    const hzMax = Math.max(...horizon.map(h => Math.max(h.low, h.mid * 0.6)));
+    $('verdict').innerHTML = '<div class="verdict"><b>' + head + '</b><ul class="facts">' +
+      '<li>Východ slunce v ' + fmtTime(sun.ms) + ', směr ' + Math.round(sun.az) + '°. Buď na místě do ' + arrive + '.</li>' +
+      '<li>Nejlepší skóre: ' + best.score + '/100. Míst se skóre 55 a víc: ' + good + '.</li>' +
+      '<li>Obzor na východě: ' + (hzMax <= 25 ? 'čistý' : hzMax < 60 ? 'napůl' : 'zavřený') + '.</li>' +
+      (fog ? '<li>Inverze: mlha odhadem do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto.</li>' : '') +
+      '</ul></div>';
+
+    const kindTxt = { peak: 'vrchol', tower: 'rozhledna', view: 'vyhlídka' };
+    results.forEach((r, i) => {
+      const icon = L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+        html: '<div class="pin" style="background:' + colourFor(r.score) + '">' + r.score + '</div>' });
+      const gm = 'https://www.google.com/maps/search/?api=1&query=' + f4(r.lat) + ',' + f4(r.lon);
+      r._popup = () => '<b>' + esc(r.name) + '</b> · ' + r.score + '/100 (' + grade(r.score) + ')<br>' + kindTxt[r.kind] + ', ' + Math.round(r.ele) + ' m, ' + r.km.toFixed(0) + ' km<br>' +
+        esc(r.why.join(', ')) + '<br>oblačnost nízká/střední/vysoká: ' + r.wx.low + '/' + r.wx.mid + '/' + r.wx.high + ' %' +
+        (r.wx.t !== null ? '<br>teplota ' + Math.round(r.wx.t) + ' °C, nárazy ' + Math.round(r.wx.gust) + ' km/h' : '') +
+        '<br><a href="' + gm + '" target="_blank" rel="noopener">otevřít v mapách</a>';
+      const m = L.marker([r.lat, r.lon], { icon, zIndexOffset: r.score * 10 }).addTo(map).bindPopup(r._popup());
+      r._marker = m;
+      markers.push(m);
+      if (i < 12) {
+        const li = document.createElement('li');
+        li.innerHTML = '<div class="sc" style="background:' + colourFor(r.score) + '">' + r.score + '</div><div><div class="nm">' + esc(r.name) +
+          '</div><div class="meta">' + kindTxt[r.kind] + ' · ' + Math.round(r.ele) + ' m · ' + r.km.toFixed(0) + ' km · ' + grade(r.score) +
+          '</div><div class="why">' + esc(r.why.join(', ')) + '</div></div>';
+        li.onclick = () => { map.setView([r.lat, r.lon], 13); m.openPopup(); };
+        r._nm = li.querySelector('.nm');
+        $('list').appendChild(li);
+      }
+    });
+  }
+
+  $('go').onclick = run;
+  $('place').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  run();
+})();
+</script>
+</body>
+</html>
