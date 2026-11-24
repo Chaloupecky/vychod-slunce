@@ -136,10 +136,11 @@
         <li><b>Čistý obzor na východě.</b> Nízké mraky ve směru, kde slunce vychází, ho schovají. Stránka kontroluje oblačnost až 150 km daleko.</li>
         <li><b>Barvy.</b> Trocha vysoké oblačnosti se krásně nabarví. Úplně jasno je čisté, ale míň barevné, a zataženo je šedé.</li>
         <li><b>Mlha a inverze.</b> Kopec nad mlhou v údolí dostane body navíc. Kopec v mlze ze seznamu vypadne.</li>
+        <li><b>Les.</b> Vrchol v lese je k ničemu, takže stránka u každého kopce hledá nejbližší volnou plochu (pole, louku), odkud stromy ani terén nezakrývají obzor na východ. Kopce, kde nic takového není, vypadnou.</li>
         <li><b>Výhled.</b> Z výškové mapy se ověří, jestli ve směru východu nestojí vyšší kopec. Podle toho je i čas, kdy slunce opravdu vyleze.</li>
         <li><b>Vítr a srážky.</b> Silný vítr a déšť skóre srážejí.</li>
       </ul>
-      <p>Počasí je z předpovědi Open-Meteo, kopce z výškové mapy a názvy z OpenStreetMap. Je to odhad: les na vrcholu stránka nevidí a mlhu modely trefují jen zhruba, takže ráno před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
+      <p>Počasí je z předpovědi Open-Meteo, kopce z výškové mapy a názvy z OpenStreetMap. Je to odhad: les se pozná jen podle mapy, která nemusí být přesná, a mlhu modely trefují jen zhruba, takže ráno před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
     </details>
   </section>
   <div id="map"><p id="mapnote" style="padding:20px;color:#6e6e73">Mapa se načítá… Pokud tu tenhle text zůstane, stránka běží v náhledu, který nepovolí skripty. Otevři ji v normálním prohlížeči.</p></div>
@@ -346,11 +347,48 @@ function pickTop(all, n, minKm) {
   }
   return out;
 }
+// land cover read from the colour of an OpenStreetMap tile pixel: 1 forest/orchard/scrub, 2 water or built-up, 0 open ground
+function landClass(r, g, b) {
+  if (Math.abs(r - 173) < 18 && Math.abs(g - 211) < 18 && Math.abs(b - 160) < 18) return 1;
+  if (Math.abs(r - 200) < 8 && Math.abs(g - 215) < 8 && Math.abs(b - 171) < 8) return 1;
+  if (Math.abs(r - 170) < 14 && Math.abs(g - 211) < 12 && Math.abs(b - 223) < 14) return 2;
+  if (Math.abs(r - g) < 7 && Math.abs(g - b) < 7 && r > 195 && r < 236) return 2;
+  return 0;
+}
+
+/* Around a summit at pixel (sx, sy) of a 256 px tile, find the highest patch of open ground (field, meadow)
+   from which neither trees nor terrain hide the horizon in the sunrise direction. null = nothing but forest. */
+function openSpot(land, ele, sx, sy, mpp, azDeg, maxM) {
+  const N = 256, lim = Math.tan(0.6 * RAD), R = Math.round(maxM / mpp);
+  const cls = (x, y) => { if (x < 0 || y < 0 || x >= N || y >= N) return -1; const k = (y * N + x) * 4; return landClass(land[k], land[k + 1], land[k + 2]); };
+  const dx = Math.sin(azDeg * RAD), dy = -Math.cos(azDeg * RAD);
+  let best = null;
+  for (let y = sy - R; y <= sy + R; y += 2) for (let x = sx - R; x <= sx + R; x += 2) {
+    if (x < 1 || y < 1 || x >= N - 1 || y >= N - 1) continue;
+    const dist = Math.hypot(x - sx, y - sy) * mpp;
+    if (dist > maxM || cls(x, y) !== 0) continue;
+    let open = 0, forest = 0;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const c = cls(x + b, y + a); if (c === 0) open++; else if (c === 1) forest++; }
+    if (forest > 0 || open < 7) continue;
+    const eye = ele[y * N + x] + 1.7;
+    let blocked = false;
+    for (let d = 2; d <= 70; d++) {
+      const qx = Math.round(x + dx * d), qy = Math.round(y + dy * d), c = cls(qx, qy);
+      if (c < 0) break;
+      const m = d * mpp, top = ele[qy * N + qx] + (c === 1 ? 22 : 0) - m * m / (2 * EARTH);
+      if ((top - eye) / m > lim) { blocked = true; break; }
+    }
+    if (blocked) continue;
+    const val = ele[y * N + x] - 0.03 * dist;
+    if (!best || val > best.val) best = { x, y, ele: ele[y * N + x], dist, val };
+  }
+  return best;
+}
 // ==CORE-END==
 
 if (typeof document !== 'undefined') (function () {
   const $ = id => document.getElementById(id);
-  const MAX_SPOTS = 60, H_DIST = [40000, 90000, 150000];
+  const MAX_SPOTS = 80, H_DIST = [40000, 90000, 150000];
   let center = { lat: 50.0281, lon: 15.2006, name: 'Kolín', tz: 'Europe/Prague', typed: 'Kolín' };
   const spotCache = new Map();
   let layer = null, deco = [], circle = null, markers = [], runToken = 0, shown = [];
@@ -415,18 +453,58 @@ if (typeof document !== 'undefined') (function () {
   }
 
   // ---- terrain from free elevation tiles: no key and no request limit ----
-  function loadTile(z, x, y) {
+  function rgbaTile(url) {
     return new Promise((ok, bad) => {
       const im = new Image(); im.crossOrigin = 'anonymous';
       im.onload = () => {
-        const c = document.createElement('canvas'); c.width = c.height = 256;
-        const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
-        ok(g.getImageData(0, 0, 256, 256).data);
+        try {
+          const c = document.createElement('canvas'); c.width = c.height = 256;
+          const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
+          ok(g.getImageData(0, 0, 256, 256).data);
+        } catch (e) { bad(e); }
       };
-      im.onerror = () => bad(new Error('Nepodařilo se načíst výškovou mapu. Zkontroluj připojení a zkus to znovu.'));
-      im.src = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/' + z + '/' + x + '/' + y + '.png';
+      im.onerror = () => bad(new Error('Nepodařilo se načíst mapová data. Zkontroluj připojení a zkus to znovu.'));
+      im.src = window.__mockTile ? window.__mockTile(url) : url;
     });
   }
+  const loadTile = (z, x, y) => rgbaTile('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/' + z + '/' + x + '/' + y + '.png');
+
+  // detailed tiles around one hill: where the forest is (from the map picture) and fine terrain
+  const fineCache = new Map();
+  function fineTile(x, y) {
+    const key = x + '/' + y;
+    if (!fineCache.has(key)) fineCache.set(key, Promise.all([
+      rgbaTile('https://tile.openstreetmap.org/12/' + x + '/' + y + '.png').catch(() => null),
+      loadTile(12, x, y).catch(() => null)
+    ]).then(([land, t]) => {
+      if (!land || !t) return null;
+      const ele = new Float32Array(65536);
+      for (let i = 0; i < 65536; i++) ele[i] = t[i * 4] * 256 + t[i * 4 + 1] + t[i * 4 + 2] / 256 - 32768;
+      return { land, ele };
+    }));
+    return fineCache.get(key);
+  }
+  // move every hill to a nearby open patch with a clear view towards the sunrise; hills that are all forest drop out
+  async function refine(spots, az) {
+    const n = 4096;
+    const out = await Promise.all(spots.map(async s => {
+      if (s.kind === 'tower') return { ...s, note: 'Rozhledna s výhledem nad stromy. Ověř si, jestli je ráno přístupná.' };
+      if (s.kind === 'view') return { ...s, note: 'Vyhlídka zakreslená v mapě.' };
+      const fx = (s.lon + 180) / 360 * n, fy = (1 - Math.log(Math.tan(s.lat * RAD) + 1 / Math.cos(s.lat * RAD)) / Math.PI) / 2 * n;
+      const tx = Math.floor(fx), ty = Math.floor(fy), t = await fineTile(tx, ty);
+      if (!t) return { ...s, unverified: true, note: 'Nepodařilo se ověřit, jestli tam není les.' };
+      const mpp = 40075016 * Math.cos(s.lat * RAD) / (256 * n);
+      const b = openSpot(t.land, t.ele, Math.floor((fx - tx) * 256), Math.floor((fy - ty) * 256), mpp, az, 1200);
+      if (!b) return null;
+      const lon = (tx + (b.x + 0.5) / 256) / n * 360 - 180, lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty + (b.y + 0.5) / 256) / n))) / RAD;
+      const moved = b.dist >= 120;
+      return { ...s, lat, lon, ele: b.ele, peakLat: s.lat, peakLon: s.lon, moved,
+        name: s.unnamed ? 'Výhled ' + Math.round(b.ele) + ' m' : s.name,
+        note: moved ? 'Volná plocha bez lesa asi ' + Math.max(100, Math.round(b.dist / 50) * 50) + ' m od vrcholu, s výhledem na východ.' : 'Vrchol je bez lesa, s výhledem na východ.' };
+    }));
+    return out.filter(Boolean);
+  }
+
   async function loadTerrain(radiusKm) {
     const z = radiusKm > 50 ? 8 : radiusKm <= 10 ? 10 : 9, n = 2 ** z, pad = radiusKm + 17;
     const dLa = pad / 111.2, dLo = pad / (111.2 * Math.cos(center.lat * RAD));
@@ -508,7 +586,7 @@ if (typeof document !== 'undefined') (function () {
     for (const r of shown) {
       if (r.kind !== 'peak') continue;
       let best = null, bd = 0.7;
-      for (const o of list) { if (o.kind !== 'peak') continue; const d = distKm(r, o); if (d < bd) { bd = d; best = o; } }
+      for (const o of list) { if (o.kind !== 'peak') continue; const d = distKm({ lat: r.peakLat ?? r.lat, lon: r.peakLon ?? r.lon }, o); if (d < bd) { bd = d; best = o; } }
       if (best) { rename(r, best.name); hit++; }
     }
     if (hit) status($('status').textContent.replace(/ Názvy.*$/, '') + ' Názvy kopců doplněny; rozhledny a vyhlídky se přidají při dalším hledání.');
@@ -525,7 +603,7 @@ if (typeof document !== 'undefined') (function () {
       try {
         const j = await getJSON('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=13&accept-language=cs&lat=' + f4(r.lat) + '&lon=' + f4(r.lon), null, 8000);
         const a = j.address || {}, place = a.village || a.town || a.hamlet || a.city || a.municipality || a.suburb;
-        if (place && token === runToken && r.unnamed) rename(r, 'Kopec ' + Math.round(r.ele) + ' m u obce ' + place);
+        if (place && token === runToken && r.unnamed) rename(r, r.name + ' u obce ' + place);
       } catch (e) {}
       await sleep(1100);
     }
@@ -567,8 +645,11 @@ if (typeof document !== 'undefined') (function () {
       const dateStr = new Date(sun.ms).toISOString().slice(0, 10);
       const hIdx = new Date(hourMs).toISOString().slice(0, 10) === dateStr ? new Date(hourMs).getUTCHours() : 23;
 
-      const { spots, minEle, total, named, T } = await findSpots(radiusKm, token);
-      if (!spots.length) throw new Error('V tomhle okruhu není žádný výraznější kopec. Zkus větší okruh.');
+      const found = await findSpots(radiusKm, token), { minEle, named, T } = found;
+      if (!found.spots.length) throw new Error('V tomhle okruhu není žádný výraznější kopec. Zkus větší okruh.');
+      status('Kontroluju, kde je volný výhled a kde les…');
+      const spots = await refine(found.spots, sun.az), total = found.spots.length;
+      if (!spots.length) throw new Error('Všechny kopce v okruhu jsou zalesněné a bez výhledu na východ. Zkus větší okruh.');
 
       status('Stahuju předpověď počasí pro ' + spots.length + ' míst…');
       const hPts = H_DIST.map(d => dest(center.lat, center.lon, sun.az, d));
@@ -589,14 +670,16 @@ if (typeof document !== 'undefined') (function () {
         const own = findSunrise(startMs, s.lat, s.lon) || sun, need = Math.max(-0.833, ta - 0.57);
         let seenMs = own.ms;
         for (let t = own.ms; t < own.ms + 3 * 3600000; t += 60000) if (sunPos(t, s.lat, s.lon).alt >= need) { seenMs = t; break; }
-        return { ...s, wx, ...analyse(s, wx, horizon, ta), km: distKm(center, s), seenMs };
+        const r = { ...s, wx, ...analyse(s, wx, horizon, ta), km: distKm(center, s), seenMs };
+        if (s.kind === 'peak') r.why.unshift(s.unverified ? 'les neověřen' : 'volná plocha bez lesa');
+        return r;
       });
       const top = pickTop(results.filter(r => r.score >= 10), 10, radiusKm <= 10 ? 1 : 3);
 
       if (token !== runToken) return;
       render(top, results, sun, radiusKm);
-      status(top.length ? 'Vybráno ' + top.length + ' z ' + results.length + ' prověřených kopců a vyhlídek. Pořadí bere kvalitu východu i to, jak je to daleko.' +
-        (named ? '' : ' Názvy kopců se ještě načítají.') : 'Prověřeno ' + results.length + ' kopců a vyhlídek.');
+      status(top.length ? 'Vybráno ' + top.length + ' z ' + total + ' prověřených kopců a vyhlídek. Zalesněné vrcholy bez výhledu vypadly. Pořadí bere kvalitu východu i to, jak je to daleko.' +
+        (named ? '' : ' Názvy kopců se ještě načítají.') : 'Prověřeno ' + results.length + ' míst.');
       if (!named) nameTop(top, token);
     } catch (e) {
       status(e.message || String(e), true);
@@ -636,14 +719,15 @@ if (typeof document !== 'undefined') (function () {
     if (canNext) $('next').onclick = () => { daySel.value = String(+daySel.value + 1); run(); };
 
     const kindTxt = { peak: 'vrchol', tower: 'rozhledna', view: 'vyhlídka' };
+    const kindOf = r => r.moved ? 'volné místo pod vrcholem' : kindTxt[r.kind];
     results.forEach((r, i) => {
       const n = i + 1, arrive = fmtTime(r.seenMs - 40 * 60000), late = r.seenMs - sun.ms > 4 * 60000;
       const icon = L.divIcon({ className: '', iconSize: [32, 32], iconAnchor: [16, 16], html: '<div class="pin ' + qClass(r.score) + '">' + n + '</div>' });
       const gm = 'https://www.google.com/maps/dir/?api=1&destination=' + f4(r.lat) + ',' + f4(r.lon);
       r._popup = () => '<b class="t">' + n + '. ' + esc(r.name) + '</b>Skóre ' + r.score + ' ze 100, ' + grade(r.score) + '.<br>' +
         '<b>Buď tam do ' + arrive + '.</b> Obloha se barví od ' + fmtTime(r.seenMs - 30 * 60000) + ', slunce vyleze v ' + fmtTime(r.seenMs) +
-        (late ? ' (později, stojí před ním kopec)' : '') + '.<br>' + esc(r.why.join(', ')) + '.<br>' +
-        kindTxt[r.kind][0].toUpperCase() + kindTxt[r.kind].slice(1) + ', ' + Math.round(r.ele) + ' m n. m., ' + r.km.toFixed(0) + ' km daleko' +
+        (late ? ' (později, stojí před ním kopec)' : '') + '.<br>' + (r.note ? esc(r.note) + '<br>' : '') + esc(r.why.join(', ')) + '.<br>' +
+        kindOf(r)[0].toUpperCase() + kindOf(r).slice(1) + ', ' + Math.round(r.ele) + ' m n. m., ' + r.km.toFixed(0) + ' km daleko' +
         (r.wx.t !== null ? ', ráno ' + Math.round(r.wx.t) + ' °C' : '') + '.<br><a href="' + gm + '" target="_blank" rel="noopener">Navigovat sem</a>';
       const m = L.marker([r.lat, r.lon], { icon, zIndexOffset: (20 - n) * 100 }).addTo(map).bindPopup(r._popup(), { maxWidth: 300 });
       r._marker = m;
