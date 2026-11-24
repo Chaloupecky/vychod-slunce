@@ -156,7 +156,7 @@
   <section id="side">
     <p id="status">Načítám…</p>
     <div id="verdict"></div>
-    <p class="label" id="dayslabel" hidden>Další dny, orientačně</p>
+    <p class="label" id="dayslabel" hidden>Další dny, orientačně. Klikni na den</p>
     <div id="days" class="days" hidden></div>
     <p class="label" id="listlabel" hidden>Nejlepší místa, klikni pro čas a navigaci</p>
     <ol id="list"></ol>
@@ -692,11 +692,13 @@ if (typeof document !== 'undefined') (function () {
     outlookCache.set(key, { at: Date.now(), days });
     return days;
   }
+  let lastDays = null, bestNow = null;
   function showOutlook(days) {
+    lastDays = days;
     const box = $('days'), sel = $('day');
     box.innerHTML = '';
     [...sel.options].forEach((o, d) => {
-      const b = document.createElement('button'), sc = days[d];
+      const b = document.createElement('button'), sc = sel.value === o.value && bestNow !== null ? bestNow : days[d];
       b.type = 'button'; b.className = 'daychip' + (sel.value === o.value ? ' on' : '');
       b.innerHTML = o.textContent[0].toUpperCase() + o.textContent.slice(1) + (sc == null ? '<b class="na">?</b>' : '<b class="' + qClass(sc) + '">' + sc + '</b>');
       b.onclick = () => { sel.value = o.value; run(); };
@@ -706,7 +708,7 @@ if (typeof document !== 'undefined') (function () {
   }
 
   async function run() {
-    syncSegs(); $('listlabel').hidden = true; $('days').hidden = true; $('dayslabel').hidden = true;
+    syncSegs(); $('listlabel').hidden = true; $('days').hidden = true; $('dayslabel').hidden = true; lastDays = null; bestNow = null;
     const btn = $('go'); btn.disabled = true; btn.classList.add('busy'); btn.textContent = 'Hledám…';
     $('verdict').innerHTML = ''; $('list').innerHTML = '';
     const token = ++runToken;
@@ -796,6 +798,7 @@ if (typeof document !== 'undefined') (function () {
 
     const daySel = $('day'), dayTxt = daySel.selectedOptions[0].textContent;
     const best = all.reduce((a, b) => b.score > a.score ? b : a).score, fog = results.find(r => r.seaBelow);
+    bestNow = best; if (lastDays) showOutlook(lastDays);
     const rise = (set ? 'Slunce zapadá v ' : 'Slunce vychází v ') + fmtTime(sun.ms) + '. ', W = set ? 'Západ ' : 'Východ ';
     let head, sub, flat = false;
     if (best >= 75) { head = W + dayTxt + (set ? ' stojí za výlet' : ' stojí za budík'); sub = rise + (fog ? 'Je inverze: mlha asi do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto. ' : ''); }
