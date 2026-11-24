@@ -338,7 +338,9 @@ function mergePlaces(dem, places, nearKm) {
 }
 // the short list: best score, nearer places preferred, no two picks right next to each other
 function pickTop(all, n, minKm) {
-  const sorted = all.slice().sort((a, b) => (b.score - 0.4 * b.km) - (a.score - 0.4 * a.km));
+  // lookout towers are often locked at dawn, so open ground goes first
+  const val = r => r.score - 0.4 * r.km - (r.kind === 'tower' ? 12 : 0);
+  const sorted = all.slice().sort((a, b) => val(b) - val(a));
   const out = [];
   for (const r of sorted) {
     if (out.length >= n) break;
@@ -672,6 +674,8 @@ if (typeof document !== 'undefined') (function () {
         for (let t = own.ms; t < own.ms + 3 * 3600000; t += 60000) if (sunPos(t, s.lat, s.lon).alt >= need) { seenMs = t; break; }
         const r = { ...s, wx, ...analyse(s, wx, horizon, ta), km: distKm(center, s), seenMs };
         if (s.kind === 'peak') r.why.unshift(s.unverified ? 'les neověřen' : 'volná plocha bez lesa');
+        else if (s.kind === 'tower') r.why.unshift('rozhledna, ráno může být zavřená');
+        else r.why.unshift('vyhlídka');
         return r;
       });
       const top = pickTop(results.filter(r => r.score >= 10), 10, radiusKm <= 10 ? 1 : 3);
