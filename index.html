@@ -395,7 +395,7 @@ if (typeof document !== 'undefined') (function () {
 
   if (typeof L === 'undefined') { $('mapnote').textContent = 'Nepodařilo se načíst mapovou knihovnu. Zkus stránku obnovit.'; return; }
   $('mapnote').remove();
-  const map = L.map('map', { zoomControl: false, zoomSnap: 0.1, zoomDelta: 0.5, wheelPxPerZoomLevel: 140, wheelDebounceTime: 15, inertiaDeceleration: 2200, easeLinearity: 0.2 }).setView([center.lat, center.lon], 10);
+  const map = L.map('map', { zoomControl: false }).setView([center.lat, center.lon], 10);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   // keep the map sized to its box; if the box was hidden when results arrived, frame them once it shows
   let lastBounds = null, hadSize = false;
