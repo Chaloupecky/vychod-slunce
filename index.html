@@ -184,6 +184,8 @@
 // ==CORE-START==
 const EARTH = 6371000, RAD = Math.PI / 180;
 const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700];
+// typical heights of those pressure levels in metres; saves asking the weather server for them
+const LEVEL_H = { 1000: 110, 975: 320, 950: 540, 925: 760, 900: 990, 850: 1460, 800: 1950, 700: 3010 };
 
 function sunPos(ms, lat, lon) {
   const d = ms / 86400000 + 2440587.5 - 2451545.0;
@@ -461,7 +463,7 @@ if (typeof document !== 'undefined') (function () {
     const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), ms || 30000);
     try {
       const r = await fetch(url, { ...(opts || {}), signal: ctl.signal });
-      if (r.status === 429) throw new Error('Server s počasím hlásí moc dotazů najednou. Počkej minutu a zkus to znovu.');
+      if (r.status === 429) throw new Error('Server s počasím hlásí moc dotazů z tvé sítě. Zkus to za pár minut znovu, po hodně hledáních to může trvat až hodinu.');
       if (!r.ok) throw new Error('HTTP ' + r.status + ' z ' + new URL(url).host);
       return await r.json();
     } catch (e) {
@@ -649,7 +651,7 @@ if (typeof document !== 'undefined') (function () {
   async function weather(pts, dateStr, withProfile) {
     let vars = 'cloud_cover_low,cloud_cover_mid,cloud_cover_high';
     if (withProfile) vars += ',visibility,wind_gusts_10m,precipitation,relative_humidity_2m,temperature_2m,' +
-      LEVELS.map(l => 'relative_humidity_' + l + 'hPa,geopotential_height_' + l + 'hPa').join(',');
+      LEVELS.map(l => 'relative_humidity_' + l + 'hPa').join(',');
     const out = [];
     for (const part of chunk(pts, 30)) {
       const j = await getJSON('https://api.open-meteo.com/v1/forecast?latitude=' + part.map(p => f4(p.lat)).join(',') +
@@ -729,14 +731,23 @@ if (typeof document !== 'undefined') (function () {
       const spots = await refine(found.spots, sun.az, set), total = found.spots.length;
       if (!spots.length) throw new Error('Všechny kopce v okruhu jsou zalesněné a bez volného výhledu. Zkus větší okruh.');
 
-      status('Stahuju předpověď počasí pro ' + spots.length + ' míst…');
+      status('Stahuju předpověď počasí…');
       const hPts = H_DIST.map(d => dest(center.lat, center.lon, sun.az, d));
-      const [wxAll, hzAll] = await Promise.all([weather(spots, dateStr, true), weather(hPts, dateStr, false)]);
+      // weather changes slowly from hill to hill, so ask for it on a coarse grid and share it between neighbours
+      const cellKm = Math.max(8, radiusKm / 2.5), kLa = cellKm / 111.2, kLo = cellKm / (111.2 * Math.cos(center.lat * RAD)), cells = new Map();
+      spots.forEach(s => {
+        s._cell = Math.round(s.lat / kLa) + ':' + Math.round(s.lon / kLo);
+        const c = cells.get(s._cell) || { lat: 0, lon: 0, n: 0 };
+        c.lat += s.lat; c.lon += s.lon; c.n++; cells.set(s._cell, c);
+      });
+      const cellList = [...cells.entries()].map(([k, c]) => ({ k, lat: c.lat / c.n, lon: c.lon / c.n }));
+      const [wxCells, hzAll] = await Promise.all([weather(cellList, dateStr, true), weather(hPts, dateStr, false)]);
+      const wxBy = new Map(cellList.map((c, i) => [c.k, wxCells[i]]));
       const horizon = hzAll.map(j => ({ low: j.hourly.cloud_cover_low[hIdx] ?? 0, mid: j.hourly.cloud_cover_mid[hIdx] ?? 0 }));
 
       const results = spots.map((s0, i) => {
-        const s = { ...s0 }, h = wxAll[i].hourly, v = k => h[k] ? h[k][hIdx] : null;
-        const profile = LEVELS.map(l => ({ h: v('geopotential_height_' + l + 'hPa'), rh: v('relative_humidity_' + l + 'hPa') }))
+        const s = { ...s0 }, h = wxBy.get(s0._cell).hourly, v = k => h[k] ? h[k][hIdx] : null;
+        const profile = LEVELS.map(l => ({ h: LEVEL_H[l], rh: v('relative_humidity_' + l + 'hPa') }))
           .filter(p => p.h !== null && p.rh !== null && p.h >= minEle - 50).sort((a, b) => a.h - b.h);
         const wx = { low: v('cloud_cover_low') ?? 0, mid: v('cloud_cover_mid') ?? 0, high: v('cloud_cover_high') ?? 0,
           vis: v('visibility') ?? 20000, gust: v('wind_gusts_10m') ?? 0, precip: v('precipitation') ?? 0,
