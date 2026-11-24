@@ -835,8 +835,8 @@ if (typeof document !== 'undefined') (function () {
     results.forEach((r, i) => {
       const n = i + 1, arrive = fmtTime(r.seenMs - (set ? 30 : 40) * 60000), off = Math.abs(r.seenMs - sun.ms) > 4 * 60000;
       const timeTxt = set
-        ? '<b>Buď tam do ' + arrive + '.</b> Slunce zapadne v ' + fmtTime(r.seenMs) + (off ? ' (dřív, schová se za kopec)' : '') + ', obloha se barví ještě asi do ' + fmtTime(r.seenMs + 25 * 60000) + '.'
-        : '<b>Buď tam do ' + arrive + '.</b> Obloha se barví od ' + fmtTime(r.seenMs - 30 * 60000) + ', slunce vyleze v ' + fmtTime(r.seenMs) + (off ? ' (později, stojí před ním kopec)' : '') + '.';
+        ? '<b>Buď tam od ' + arrive + '.</b> Slunce zapadne v ' + fmtTime(r.seenMs) + (off ? ' (dřív, schová se za kopec)' : '') + ', obloha se barví ještě asi do ' + fmtTime(r.seenMs + 25 * 60000) + '.'
+        : '<b>Buď tam od ' + arrive + '.</b> Obloha se barví od ' + fmtTime(r.seenMs - 30 * 60000) + ', slunce vyleze v ' + fmtTime(r.seenMs) + (off ? ' (později, stojí před ním kopec)' : '') + '.';
       const icon = L.divIcon({ className: '', iconSize: [32, 32], iconAnchor: [16, 16], html: '<div class="pin ' + qClass(r.score) + '">' + n + '</div>' });
       const gm = 'https://www.google.com/maps/dir/?api=1&destination=' + f4(r.lat) + ',' + f4(r.lon);
       r._popup = () => '<b class="t">' + n + '. ' + esc(r.name) + '</b>Skóre ' + r.score + ' ze 100, ' + grade(r.score) + '.<br>' +
@@ -847,7 +847,7 @@ if (typeof document !== 'undefined') (function () {
       r._marker = m;
       markers.push(m);
       const li = document.createElement('li');
-      li.innerHTML = '<div class="rank">' + n + '</div><div><div class="nm">' + esc(r.name) + '</div><div class="when">' + r.km.toFixed(0) + ' km daleko, být tam do ' + arrive +
+      li.innerHTML = '<div class="rank">' + n + '</div><div><div class="nm">' + esc(r.name) + '</div><div class="when">' + r.km.toFixed(0) + ' km daleko, být tam od ' + arrive +
         '</div><div class="why">' + esc(r.why.join(', ')) + '</div></div><div class="score"><b class="' + qClass(r.score) + '">' + r.score + '</b><small>' + grade(r.score) + '</small></div>';
       li.onclick = () => { map.setView([r.lat, r.lon], 12); m.openPopup(); if (window.innerWidth <= 860) $('map').scrollIntoView({ behavior: 'smooth' }); };
       r._nm = li.querySelector('.nm');
