@@ -359,8 +359,14 @@ if (typeof document !== 'undefined') (function () {
   $('mapnote').remove();
   const map = L.map('map', { zoomControl: false, zoomSnap: 0.1, zoomDelta: 0.5, wheelPxPerZoomLevel: 140, wheelDebounceTime: 15, inertiaDeceleration: 2200, easeLinearity: 0.2 }).setView([center.lat, center.lon], 10);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  window.addEventListener('resize', () => map.invalidateSize());
-  setTimeout(() => map.invalidateSize(), 300);
+  // keep the map sized to its box; if the box was hidden when results arrived, frame them once it shows
+  let lastBounds = null, hadSize = false;
+  new ResizeObserver(() => {
+    const el = $('map'), has = el.clientWidth > 50 && el.clientHeight > 50;
+    map.invalidateSize();
+    if (has && !hadSize && lastBounds) map.fitBounds(lastBounds);
+    hadSize = has;
+  }).observe($('map'));
   // keyless map backgrounds; if one fails to load, switch to the other
   const bases = {
     'Mapa': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 18 }),
@@ -611,7 +617,8 @@ if (typeof document !== 'undefined') (function () {
     deco.push(L.polyline([[center.lat, center.lon], [far.lat, far.lon]], { color: '#ff9500', weight: 3, opacity: 0.85, lineCap: 'round', dashArray: '1 9', interactive: false }).addTo(map));
     deco.push(L.marker([far.lat, far.lon], { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="sunpin"></div>' }), zIndexOffset: -500 }).addTo(map).bindTooltip('Tímhle směrem vyjde slunce'));
     deco.push(L.marker([center.lat, center.lon], { icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me"></div>' }), zIndexOffset: -400, interactive: false }).addTo(map));
-    map.flyToBounds(circle.getBounds().pad(0.04), { duration: 0.6 });
+    lastBounds = circle.getBounds().pad(0.04);
+    if (hadSize) map.flyToBounds(lastBounds, { duration: 0.6 });
 
     const daySel = $('day'), dayTxt = daySel.selectedOptions[0].textContent;
     const best = all.reduce((a, b) => b.score > a.score ? b : a).score, fog = results.find(r => r.seaBelow);
