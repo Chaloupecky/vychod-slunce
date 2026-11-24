@@ -6,6 +6,6 @@ a ohodnotí je podle předpovědi na ranní východ slunce: čistý obzor, barvy
 - Počasí: [Open-Meteo](https://open-meteo.com) (zdarma, jen nekomerční použití)
 - Výšková mapa: Mapzen Terrain Tiles na AWS
 - Názvy míst: OpenStreetMap (Overpass, Nominatim)
-- Mapa: Leaflet, podklad CARTO / OpenStreetMap
+- Mapa: Leaflet, podklad OpenStreetMap / OpenTopoMap
 
 Všechno běží v prohlížeči, bez serveru a bez API klíčů. Skóre je odhad, ráno se vyplatí zkontrolovat webkameru.

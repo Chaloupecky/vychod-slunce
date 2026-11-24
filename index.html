@@ -270,19 +270,15 @@ if (typeof document !== 'undefined') (function () {
   const map = L.map('map').setView([center.lat, center.lon], 10);
   window.addEventListener('resize', () => map.invalidateSize());
   setTimeout(() => map.invalidateSize(), 300);
-  const tiles = [
-    ['https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', '© OpenStreetMap, © CARTO'],
-    ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', '© OpenStreetMap, © OpenTopoMap'],
-    ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap']
-  ];
-  let tileIdx = 0, tileErr = 0;
-  function useTiles(i) {
-    if (layer) map.removeLayer(layer);
-    tileErr = 0;
-    layer = L.tileLayer(tiles[i][0], { attribution: tiles[i][1], maxZoom: 16 }).addTo(map);
-    layer.on('tileerror', () => { if (++tileErr === 6 && tileIdx < tiles.length - 1) useTiles(++tileIdx); });
-  }
-  useTiles(0);
+  // keyless map backgrounds; if one fails to load, switch to the other
+  const bases = {
+    'Mapa': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 18 }),
+    'Terén': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap, SRTM | © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 16 })
+  };
+  layer = bases['Mapa'].addTo(map);
+  L.control.layers(bases, null, { position: 'topright' }).addTo(map);
+  let tileErr = 0, swapped = false;
+  bases['Mapa'].on('tileerror', () => { if (++tileErr >= 6 && !swapped && map.hasLayer(bases['Mapa'])) { swapped = true; map.removeLayer(bases['Mapa']); bases['Terén'].addTo(map); } });
   map.on('click', e => {
     center = { lat: e.latlng.lat, lon: e.latlng.lng, name: 'bod v mapě', tz: center.tz, typed: null };
     $('place').value = e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4);
