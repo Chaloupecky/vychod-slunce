@@ -103,6 +103,14 @@
   .daychip b{font-size:15px;font-weight:700;color:#1c1c1e;min-width:40px;line-height:26px;border-radius:13px;font-variant-numeric:tabular-nums}
   .daychip b.na{background:var(--fill);color:var(--mute)}
 
+  .verdict .conf{font-size:13px;margin-top:10px;padding-left:16px;position:relative;color:var(--mute)}
+  .verdict .conf[hidden]{display:none}
+  .verdict .conf::before{content:"";position:absolute;left:0;top:5px;width:9px;height:9px;border-radius:50%;background:var(--q4)}
+  .verdict .conf.c1::before{background:var(--q3)}
+  .verdict .conf.c2::before{background:var(--q2)}
+  .verdict .conf.c2{color:var(--ink);font-weight:500}
+  .daychip small.unc{color:#c93400;font-weight:600;margin-top:0}
+
   #choose{position:fixed;inset:0;z-index:5000;background:var(--bg);display:grid;place-items:center;padding:20px;overflow:auto}
   #choose[hidden]{display:none}
   .choosebox{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:560px;width:100%}
@@ -180,6 +188,7 @@
         <li><b>Les.</b> Vrchol v lese je k ničemu, takže stránka u každého kopce hledá nejbližší volnou plochu (pole, louku), odkud stromy ani terén nezakrývají obzor směrem ke slunci. Kopce, kde nic takového není, vypadnou.</li>
         <li><b>Výhled.</b> Z výškové mapy se ověří, jestli směrem ke slunci nestojí vyšší kopec. Podle toho je i čas, kdy slunce opravdu vyleze nebo zapadne.</li>
         <li><b>Vítr a srážky.</b> Silný vítr a déšť skóre srážejí.</li>
+        <li><b>Jistota.</b> Stejný den se spočítá ještě podle dvou dalších předpovědních modelů. Když se rozcházejí, stránka napíše, že je předpověď nejistá.</li>
       </ul>
       <p>Počasí je z předpovědi Open-Meteo, kopce z výškové mapy a názvy z OpenStreetMap. Je to odhad: les se pozná jen podle mapy, která nemusí být přesná, a mlhu modely trefují jen zhruba, takže před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
     </details>
@@ -702,32 +711,67 @@ if (typeof document !== 'undefined') (function () {
     const j = await getJSON('https://api.open-meteo.com/v1/forecast?latitude=' + pts.map(q => f4(q.lat)).join(',') + '&longitude=' + pts.map(q => f4(q.lon)).join(',') +
       '&hourly=cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,precipitation,wind_gusts_10m&start_date=' + iso(Date.UTC(p[0], p[1] - 1, p[2] - 1)) +
       '&end_date=' + iso(Date.UTC(p[0], p[1] - 1, p[2] + 4)) + '&timezone=GMT');
+    const ALT = ['ecmwf_ifs025', 'gfs_seamless'];
+    let k = null;
+    try { k = await getJSON('https://api.open-meteo.com/v1/forecast?latitude=' + pts.map(q => f4(q.lat)).join(',') + '&longitude=' + pts.map(q => f4(q.lon)).join(',') +
+      '&hourly=cloud_cover_low,cloud_cover_mid,cloud_cover_high&models=' + ALT.join(',') + '&start_date=' + iso(Date.UTC(p[0], p[1] - 1, p[2] - 1)) +
+      '&end_date=' + iso(Date.UTC(p[0], p[1] - 1, p[2] + 4)) + '&timezone=GMT'); } catch (e) {}
     const days = evs.map(ev => {
       if (!ev) return null;
-      const i = j[0].hourly.time.indexOf(new Date(Math.round(ev.ms / 3600000) * 3600000).toISOString().slice(0, 13) + ':00');
+      const stamp = new Date(Math.round(ev.ms / 3600000) * 3600000).toISOString().slice(0, 13) + ':00';
+      const i = j[0].hourly.time.indexOf(stamp);
       if (i < 0 || j[0].hourly.cloud_cover_low[i] == null) return null;
       const h = j[0].hourly;
       const wx = { low: h.cloud_cover_low[i], mid: h.cloud_cover_mid[i], high: h.cloud_cover_high[i], vis: h.visibility[i] ?? 20000, gust: h.wind_gusts_10m[i] ?? 0, precip: h.precipitation[i] ?? 0, rh2m: 0, profile: [] };
       const hz = j.slice(1).map(q => ({ low: q.hourly.cloud_cover_low[i] ?? 0, mid: q.hourly.cloud_cover_mid[i] ?? 0 }));
-      return analyse({ ele: 0 }, wx, hz, -1, set).score;
+      const main = analyse({ ele: 0 }, wx, hz, -1, set).score;
+      // the same moment as two other weather models see it, clouds only
+      const alt = [];
+      if (k) for (const m of ALT) {
+        const g = (q, v) => q.hourly['cloud_cover_' + v + '_' + m], ki = k[0].hourly.time.indexOf(stamp);
+        if (ki < 0 || !g(k[0], 'low') || g(k[0], 'low')[ki] == null) continue;
+        const w2 = { low: g(k[0], 'low')[ki], mid: g(k[0], 'mid')[ki] ?? 0, high: g(k[0], 'high')[ki] ?? 0, vis: 20000, gust: 0, precip: 0, rh2m: 0, profile: [] };
+        const h2 = k.slice(1).map(q => ({ low: g(q, 'low')[ki] ?? 0, mid: g(q, 'mid')[ki] ?? 0 }));
+        alt.push(analyse({ ele: 0 }, w2, h2, -1, set).score);
+      }
+      return { main, alt };
     });
     outlookCache.set(key, { at: Date.now(), days });
     return days;
   }
-  let lastDays = null, bestNow = null;
+  // how far apart the models are for one day: 0 agree, 1 differ a bit, 2 disagree, null unknown
+  function doubt(day) {
+    if (!day || !day.alt.length) return null;
+    const all = [day.main, ...day.alt], spread = Math.max(...all) - Math.min(...all);
+    return spread > 45 ? 2 : spread > 20 ? 1 : 0;
+  }
+  function paintConf() {
+    const el = $('conf'), set = $('mode').value === 'zapad';
+    if (!el) return;
+    const day = lastDays && lastDays[+$('day').value], lvl = doubt(day);
+    if (lvl === null) { el.hidden = true; return; }
+    const hi = Math.max(...day.alt), lo = Math.min(...day.alt), good = (bestNow !== null ? bestNow : day.main) >= 55;
+    const txt = lvl === 0 ? 'Jistota vysoká: předpovědní modely se shodují.'
+      : lvl === 1 ? 'Jistota střední: předpovědní modely se trochu liší.'
+      : !good && hi >= 55 ? 'Předpověď je nejistá: jiný model tu vidí hezký ' + (set ? 'západ' : 'východ') + '. Zkus to ověřit později.'
+      : good && lo < 35 ? 'Předpověď je nejistá: jiný model čeká zataženo. Zkus to ověřit později.'
+      : 'Předpověď je nejistá, modely se hodně liší. Zkus to ověřit později.';
+    el.className = 'conf c' + lvl; el.textContent = txt; el.hidden = false;
+  }
   function showOutlook(days) {
     lastDays = days;
     const box = $('days'), sel = $('day');
     box.innerHTML = '';
     [...sel.options].forEach((o, d) => {
-      const b = document.createElement('button'), sc = sel.value === o.value && bestNow !== null ? bestNow : days[d];
+      const b = document.createElement('button'), sc = sel.value === o.value && bestNow !== null ? bestNow : (days[d] ? days[d].main : null);
       b.type = 'button'; b.className = 'daychip' + (sel.value === o.value ? ' on' : '');
       const date = new Intl.DateTimeFormat('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', timeZone: center.tz }).format(new Date(Date.now() + d * 86400000));
-      b.innerHTML = o.textContent[0].toUpperCase() + o.textContent.slice(1) + '<small>' + date + '</small>' + (sc == null ? '<b class="na">?</b>' : '<b class="' + qClass(sc) + '">' + sc + '</b>');
+      b.innerHTML = o.textContent[0].toUpperCase() + o.textContent.slice(1) + '<small>' + date + '</small>' + (sc == null ? '<b class="na">?</b>' : '<b class="' + qClass(sc) + '">' + sc + '</b>') + (doubt(days[d]) === 2 ? '<small class="unc">nejisté</small>' : '');
       b.onclick = () => { sel.value = o.value; run(); };
       box.appendChild(b);
     });
     box.hidden = false; $('dayslabel').hidden = false;
+    paintConf();
   }
 
   async function run() {
@@ -831,8 +875,9 @@ if (typeof document !== 'undefined') (function () {
     else { head = 'Na hezký ' + (set ? 'západ' : 'východ') + ' to tu ' + dayTxt + ' nevypadá'; sub = rise + 'Podle předpovědi bude zataženo nebo mlha. Mrkni níž na další dny, nebo zkus jiné místo. Na podzim a v zimě to často bývá nízká oblačnost, nad kterou je na horách jasno.'; flat = true; }
     const jump = results.length && !flat;
     $('listlabel').hidden = !results.length;
-    $('verdict').innerHTML = '<button class="verdict' + (jump ? '' : ' flat') + '" id="vbtn"><b>' + head + '</b><span>' + sub + '</span>' + (jump ? '<i>Ukázat místo č. 1</i>' : '') + '</button>';
+    $('verdict').innerHTML = '<button class="verdict' + (jump ? '' : ' flat') + '" id="vbtn"><b>' + head + '</b><span>' + sub + '</span><span id="conf" hidden></span>' + (jump ? '<i>Ukázat místo č. 1</i>' : '') + '</button>';
 
+    paintConf();
     const kindTxt = { peak: 'vrchol', tower: 'rozhledna', view: 'vyhlídka' };
     const kindOf = r => r.moved ? 'volné místo pod vrcholem' : kindTxt[r.kind];
     results.forEach((r, i) => {
