@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Najde kopce a vyhlídky v okolí, kde bude zítra hezký východ slunce. Zdarma, podle předpovědi počasí.">
-<title>Kde bude hezký východ slunce</title>
+<meta name="description" content="Najde místa v okolí, kde bude hezký východ nebo západ slunce. Zdarma, podle předpovědi počasí.">
+<title>Východ a západ slunce: kde bude nejhezčí</title>
 <link rel="stylesheet" href="vendor/leaflet.css">
 <script src="vendor/leaflet.js"></script>
 <style>
@@ -94,6 +94,22 @@
   .pin{transition:transform .15s}
   .leaflet-marker-icon:hover .pin{transform:scale(1.15)}
 
+  #choose{position:fixed;inset:0;z-index:5000;background:var(--bg);display:grid;place-items:center;padding:20px;overflow:auto}
+  #choose[hidden]{display:none}
+  .choosebox{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:560px;width:100%}
+  .choosebox h2{grid-column:1/-1;font-size:34px;line-height:1.1;font-weight:700;letter-spacing:-.022em;margin:0 0 10px}
+  .opt{border:0;background:var(--card);border-radius:20px;padding:22px 18px 20px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:2px;box-shadow:0 1px 3px #0000000f}
+  .opt:hover{box-shadow:0 6px 22px #0000001f}
+  .opt:active{transform:scale(.98)}
+  .opt b{font-size:20px;font-weight:700;letter-spacing:-.01em;margin-top:16px}
+  .opt span:last-child{font-size:15px;color:var(--mute)}
+  .ico{width:64px;height:64px;border-radius:50%;display:block;position:relative;overflow:hidden}
+  .ico::after{content:"";position:absolute;left:0;right:0;bottom:0;height:38%;background:var(--card);border-top:2px solid #1c1c1e1f}
+  .ico.rise{background:linear-gradient(180deg,#ffd60a,#ff9f0a)}
+  .ico.fall{background:linear-gradient(180deg,#bf5af2,#ff375f 55%,#ff9f0a)}
+  #title{cursor:pointer}
+  @media (max-width:520px){.choosebox{grid-template-columns:1fr}}
+
   @media (max-width:860px){
     html,body{height:auto}
     .bar{padding:10px 16px}
@@ -110,16 +126,25 @@
 </head>
 <body>
 <header class="bar">
-  <h1>Východ slunce</h1>
+  <h1 id="title">Východ slunce</h1>
   <form class="controls" id="form">
     <input id="place" value="Kolín" autocomplete="off" placeholder="Město nebo obec" aria-label="Místo">
+    <select id="mode" aria-label="Východ nebo západ"><option value="vychod" selected>východ</option><option value="zapad">západ</option></select>
     <select id="radius" aria-label="Okruh"><option value="10">10 km</option><option value="25">25 km</option><option value="50" selected>50 km</option><option value="75">75 km</option></select>
     <select id="day" aria-label="Den"><option value="0">dnes</option><option value="1" selected>zítra</option><option value="2">pozítří</option><option value="3">za 3 dny</option></select>
+    <div class="seg" data-for="mode" role="group" aria-label="Východ nebo západ"></div>
     <div class="seg" data-for="radius" role="group" aria-label="Okruh"></div>
     <div class="seg" data-for="day" role="group" aria-label="Den"></div>
     <button id="go" type="submit">Najít místa</button>
   </form>
 </header>
+<div id="choose" hidden>
+  <div class="choosebox">
+    <h2>Co chceš vidět?</h2>
+    <button class="opt" data-mode="vychod"><span class="ico rise" aria-hidden="true"></span><b>Východ slunce</b><span>Nejlepší místa na ráno</span></button>
+    <button class="opt" data-mode="zapad"><span class="ico fall" aria-hidden="true"></span><b>Západ slunce</b><span>Nejlepší místa na večer</span></button>
+  </div>
+</div>
 <main>
   <section id="side">
     <p id="status">Načítám…</p>
@@ -133,14 +158,14 @@
     <details class="how">
       <summary>Podle čeho se skóre počítá</summary>
       <ul>
-        <li><b>Čistý obzor na východě.</b> Nízké mraky ve směru, kde slunce vychází, ho schovají. Stránka kontroluje oblačnost až 150 km daleko.</li>
+        <li><b>Čistý obzor.</b> Nízké mraky ve směru, kde slunce vychází nebo zapadá, ho schovají. Stránka kontroluje oblačnost až 150 km daleko.</li>
         <li><b>Barvy.</b> Trocha vysoké oblačnosti se krásně nabarví. Úplně jasno je čisté, ale míň barevné, a zataženo je šedé.</li>
         <li><b>Mlha a inverze.</b> Kopec nad mlhou v údolí dostane body navíc. Kopec v mlze ze seznamu vypadne.</li>
-        <li><b>Les.</b> Vrchol v lese je k ničemu, takže stránka u každého kopce hledá nejbližší volnou plochu (pole, louku), odkud stromy ani terén nezakrývají obzor na východ. Kopce, kde nic takového není, vypadnou.</li>
-        <li><b>Výhled.</b> Z výškové mapy se ověří, jestli ve směru východu nestojí vyšší kopec. Podle toho je i čas, kdy slunce opravdu vyleze.</li>
+        <li><b>Les.</b> Vrchol v lese je k ničemu, takže stránka u každého kopce hledá nejbližší volnou plochu (pole, louku), odkud stromy ani terén nezakrývají obzor směrem ke slunci. Kopce, kde nic takového není, vypadnou.</li>
+        <li><b>Výhled.</b> Z výškové mapy se ověří, jestli směrem ke slunci nestojí vyšší kopec. Podle toho je i čas, kdy slunce opravdu vyleze nebo zapadne.</li>
         <li><b>Vítr a srážky.</b> Silný vítr a déšť skóre srážejí.</li>
       </ul>
-      <p>Počasí je z předpovědi Open-Meteo, kopce z výškové mapy a názvy z OpenStreetMap. Je to odhad: les se pozná jen podle mapy, která nemusí být přesná, a mlhu modely trefují jen zhruba, takže ráno před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
+      <p>Počasí je z předpovědi Open-Meteo, kopce z výškové mapy a názvy z OpenStreetMap. Je to odhad: les se pozná jen podle mapy, která nemusí být přesná, a mlhu modely trefují jen zhruba, takže před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
     </details>
   </section>
   <div id="map"><p id="mapnote" style="padding:20px;color:#6e6e73">Mapa se načítá… Pokud tu tenhle text zůstane, stránka běží v náhledu, který nepovolí skripty. Otevři ji v normálním prohlížeči.</p></div>
@@ -167,17 +192,17 @@ function sunPos(ms, lat, lon) {
   return { alt: alt / RAD, az: (az + 360) % 360 };
 }
 
-// first upward crossing of the horizon within 26 h after startMs
-function findSunrise(startMs, lat, lon) {
+// first crossing of the horizon within 26 h after startMs: upward (sunrise) unless `set`
+function findSunEvent(startMs, lat, lon, set) {
   const H0 = -0.833, step = 300000;
   let prev = sunPos(startMs, lat, lon).alt;
   for (let t = startMs + step; t <= startMs + 26 * 3600000; t += step) {
     const a = sunPos(t, lat, lon).alt;
-    if (prev < H0 && a >= H0) {
+    if (set ? (prev >= H0 && a < H0) : (prev < H0 && a >= H0)) {
       let lo = t - step, hi = t;
       for (let i = 0; i < 20; i++) {
         const mid = (lo + hi) / 2;
-        if (sunPos(mid, lat, lon).alt < H0) lo = mid; else hi = mid;
+        if ((sunPos(mid, lat, lon).alt < H0) !== !!set) lo = mid; else hi = mid;
       }
       return { ms: hi, az: sunPos(hi, lat, lon).az };
     }
@@ -233,7 +258,7 @@ function colourScore(high, mid) {
 
 /* spot: {ele, tower}; wx: {low,mid,high,vis,gust,precip,rh2m,profile:[{h,rh}]}
    horizon: [{low,mid}] along the sunrise direction; tAngle: degrees */
-function analyse(spot, wx, horizon, tAngle) {
+function analyse(spot, wx, horizon, tAngle, set) {
   const SAT = 92, ele = spot.ele;
   const prof = wx.profile;
   const below = prof.filter(p => p.h < ele - 50 && p.rh >= SAT);
@@ -264,7 +289,7 @@ function analyse(spot, wx, horizon, tAngle) {
   else if (lowBlock >= 60) why.push('nízká oblačnost nad tebou');
   else if (lowBlock <= 20) why.push('nad tebou čisto');
   if (!inFog) {
-    if (hz >= 60) why.push('obzor na východě zavřený mraky');
+    if (hz >= 60) why.push('obzor na ' + (set ? 'západě' : 'východě') + ' zavřený mraky');
     else if (hz <= 25) why.push('čistý obzor');
     else why.push('obzor napůl');
     const hm = wx.high + 0.5 * wx.mid;
@@ -272,8 +297,8 @@ function analyse(spot, wx, horizon, tAngle) {
     else if (hm < 10) why.push('skoro bez mraků, čistý ale míň barevný');
     else if (hm > 85 || wx.mid > 70) why.push('moc husté mraky, spíš šedo');
   }
-  if (tAngle > 2.5) { s -= 45; why.push('výhled na východ kryje terén'); }
-  else if (tAngle > 1) { s -= 25; why.push('slunce vyleze později zpoza kopce'); }
+  if (tAngle > 2.5) { s -= 45; why.push('výhled na ' + (set ? 'západ' : 'východ') + ' kryje terén'); }
+  else if (tAngle > 1) { s -= 25; why.push(set ? 'slunce zapadne dřív za kopec' : 'slunce vyleze později zpoza kopce'); }
   else if (tAngle > 0.3) { s -= 10; }
   if (wx.gust > 65) { s -= 25; why.push('silný vítr, nárazy ' + Math.round(wx.gust) + ' km/h'); }
   else if (wx.gust > 45) { s -= 10; why.push('fouká, nárazy ' + Math.round(wx.gust) + ' km/h'); }
@@ -487,10 +512,11 @@ if (typeof document !== 'undefined') (function () {
     return fineCache.get(key);
   }
   // move every hill to a nearby open patch with a clear view towards the sunrise; hills that are all forest drop out
-  async function refine(spots, az) {
+  async function refine(spots, az, set) {
+    const dir = set ? 'západ' : 'východ';
     const n = 4096;
     const out = await Promise.all(spots.map(async s => {
-      if (s.kind === 'tower') return { ...s, note: 'Rozhledna s výhledem nad stromy. Ověř si, jestli je ráno přístupná.' };
+      if (s.kind === 'tower') return { ...s, note: 'Rozhledna s výhledem nad stromy. Ověř si, jestli je ' + (set ? 'večer' : 'ráno') + ' přístupná.' };
       if (s.kind === 'view') return { ...s, note: 'Vyhlídka zakreslená v mapě.' };
       const fx = (s.lon + 180) / 360 * n, fy = (1 - Math.log(Math.tan(s.lat * RAD) + 1 / Math.cos(s.lat * RAD)) / Math.PI) / 2 * n;
       const tx = Math.floor(fx), ty = Math.floor(fy), t = await fineTile(tx, ty);
@@ -502,7 +528,7 @@ if (typeof document !== 'undefined') (function () {
       const moved = b.dist >= 120;
       return { ...s, lat, lon, ele: b.ele, peakLat: s.lat, peakLon: s.lon, moved,
         name: s.unnamed ? 'Výhled ' + Math.round(b.ele) + ' m' : s.name,
-        note: moved ? 'Volná plocha bez lesa asi ' + Math.max(100, Math.round(b.dist / 50) * 50) + ' m od vrcholu, s výhledem na východ.' : 'Vrchol je bez lesa, s výhledem na východ.' };
+        note: moved ? 'Volná plocha bez lesa asi ' + Math.max(100, Math.round(b.dist / 50) * 50) + ' m od vrcholu, s výhledem na ' + dir + '.' : 'Vrchol je bez lesa, s výhledem na ' + dir + '.' };
     }));
     return out.filter(Boolean);
   }
@@ -641,8 +667,9 @@ if (typeof document !== 'undefined') (function () {
 
       const parts = new Intl.DateTimeFormat('en-CA', { timeZone: center.tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-').map(Number);
       const startMs = Date.UTC(parts[0], parts[1] - 1, parts[2] + dayOff) - center.lon / 15 * 3600000;
-      const sun = findSunrise(startMs, center.lat, center.lon);
-      if (!sun) throw new Error('Ten den tu slunce nevychází (polární den nebo noc).');
+      const set = $('mode').value === 'zapad';
+      const sun = findSunEvent(startMs, center.lat, center.lon, set);
+      if (!sun) throw new Error('Ten den tu slunce ' + (set ? 'nezapadá' : 'nevychází') + ' (polární den nebo noc).');
       const hourMs = Math.round(sun.ms / 3600000) * 3600000;
       const dateStr = new Date(sun.ms).toISOString().slice(0, 10);
       const hIdx = new Date(hourMs).toISOString().slice(0, 10) === dateStr ? new Date(hourMs).getUTCHours() : 23;
@@ -650,8 +677,8 @@ if (typeof document !== 'undefined') (function () {
       const found = await findSpots(radiusKm, token), { minEle, named, T } = found;
       if (!found.spots.length) throw new Error('V tomhle okruhu není žádný výraznější kopec. Zkus větší okruh.');
       status('Kontroluju, kde je volný výhled a kde les…');
-      const spots = await refine(found.spots, sun.az), total = found.spots.length;
-      if (!spots.length) throw new Error('Všechny kopce v okruhu jsou zalesněné a bez výhledu na východ. Zkus větší okruh.');
+      const spots = await refine(found.spots, sun.az, set), total = found.spots.length;
+      if (!spots.length) throw new Error('Všechny kopce v okruhu jsou zalesněné a bez volného výhledu. Zkus větší okruh.');
 
       status('Stahuju předpověď počasí pro ' + spots.length + ' míst…');
       const hPts = H_DIST.map(d => dest(center.lat, center.lon, sun.az, d));
@@ -668,21 +695,21 @@ if (typeof document !== 'undefined') (function () {
         const samples = [];
         for (let d = 600; d <= 15000; d += 300) { const p = dest(s.lat, s.lon, sun.az, d); samples.push({ d, h: T.at(p.lat, p.lon) }); }
         const eye = s.ele + (s.kind === 'tower' ? 20 : 2), ta = terrainAngle(eye, samples);
-        // when the sun actually shows up at this spot: its own sunrise, later if a hill stands in the way
-        const own = findSunrise(startMs, s.lat, s.lon) || sun, need = Math.max(-0.833, ta - 0.57);
+        // when the sun is actually seen from this spot: its own sunrise or sunset, shifted if a hill stands in the way
+        const own = findSunEvent(startMs, s.lat, s.lon, set) || sun, need = Math.max(-0.833, ta - 0.57);
         let seenMs = own.ms;
-        for (let t = own.ms; t < own.ms + 3 * 3600000; t += 60000) if (sunPos(t, s.lat, s.lon).alt >= need) { seenMs = t; break; }
-        const r = { ...s, wx, ...analyse(s, wx, horizon, ta), km: distKm(center, s), seenMs };
+        for (let k = 0; k < 180; k++) { const t = own.ms + (set ? -k : k) * 60000; if (sunPos(t, s.lat, s.lon).alt >= need) { seenMs = t; break; } }
+        const r = { ...s, wx, ...analyse(s, wx, horizon, ta, set), km: distKm(center, s), seenMs };
         if (s.kind === 'peak') r.why.unshift(s.unverified ? 'les neověřen' : 'volná plocha bez lesa');
-        else if (s.kind === 'tower') r.why.unshift('rozhledna, ráno může být zavřená');
+        else if (s.kind === 'tower') r.why.unshift('rozhledna, ' + (set ? 'večer' : 'ráno') + ' může být zavřená');
         else r.why.unshift('vyhlídka');
         return r;
       });
       const top = pickTop(results.filter(r => r.score >= 10), 10, radiusKm <= 10 ? 1 : 3);
 
       if (token !== runToken) return;
-      render(top, results, sun, radiusKm);
-      status(top.length ? 'Vybráno ' + top.length + ' z ' + total + ' prověřených kopců a vyhlídek. Zalesněné vrcholy bez výhledu vypadly. Pořadí bere kvalitu východu i to, jak je to daleko.' +
+      render(top, results, sun, radiusKm, set);
+      status(top.length ? 'Vybráno ' + top.length + ' z ' + total + ' prověřených kopců a vyhlídek. Zalesněné vrcholy bez výhledu vypadly. Pořadí bere skóre i to, jak je to daleko.' +
         (named ? '' : ' Názvy kopců se ještě načítají.') : 'Prověřeno ' + results.length + ' míst.');
       if (!named) nameTop(top, token);
     } catch (e) {
@@ -690,7 +717,7 @@ if (typeof document !== 'undefined') (function () {
     } finally { if (token === runToken) { btn.disabled = false; btn.classList.remove('busy'); btn.textContent = 'Najít místa'; } }
   }
 
-  function render(results, all, sun, radiusKm) {
+  function render(results, all, sun, radiusKm, set) {
     shown = results;
     markers.forEach(m => map.removeLayer(m)); markers = [];
     deco.forEach(l => map.removeLayer(l)); deco = [];
@@ -702,19 +729,19 @@ if (typeof document !== 'undefined') (function () {
     deco.push(circle);
     const far = dest(center.lat, center.lon, sun.az, radiusKm * 1000);
     deco.push(L.polyline([[center.lat, center.lon], [far.lat, far.lon]], { color: '#ff9500', weight: 3, opacity: 0.85, lineCap: 'round', dashArray: '1 9', interactive: false }).addTo(map));
-    deco.push(L.marker([far.lat, far.lon], { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="sunpin"></div>' }), zIndexOffset: -500 }).addTo(map).bindTooltip('Tímhle směrem vyjde slunce'));
+    deco.push(L.marker([far.lat, far.lon], { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="sunpin"></div>' }), zIndexOffset: -500 }).addTo(map).bindTooltip(set ? 'Tímhle směrem zapadne slunce' : 'Tímhle směrem vyjde slunce'));
     deco.push(L.marker([center.lat, center.lon], { icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me"></div>' }), zIndexOffset: -400, interactive: false }).addTo(map));
     lastBounds = circle.getBounds().pad(0.04);
     if (hadSize) map.flyToBounds(lastBounds, { duration: 0.6 });
 
     const daySel = $('day'), dayTxt = daySel.selectedOptions[0].textContent;
     const best = all.reduce((a, b) => b.score > a.score ? b : a).score, fog = results.find(r => r.seaBelow);
-    const rise = 'Slunce vychází v ' + fmtTime(sun.ms) + '. ';
+    const rise = (set ? 'Slunce zapadá v ' : 'Slunce vychází v ') + fmtTime(sun.ms) + '. ', W = set ? 'Západ ' : 'Východ ';
     let head, sub, flat = false;
-    if (best >= 75) { head = 'Východ ' + dayTxt + ' stojí za budík'; sub = rise + (fog ? 'Je inverze: mlha asi do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto. ' : '') + ''; }
-    else if (best >= 55) { head = 'Východ ' + dayTxt + ' vypadá slušně'; sub = rise + ''; }
-    else if (best >= 35) { head = 'Východ ' + dayTxt + ' bude spíš průměrný'; sub = rise + 'Slunce nejspíš uvidíš, ale barvy budou slabší. Jiný den nebo jiné místo může vyjít líp.'; }
-    else { head = 'Na hezký východ to tu ' + dayTxt + ' nevypadá'; sub = 'Podle předpovědi bude zataženo nebo mlha. Zkus jiný den nebo jiné místo.'; flat = true; }
+    if (best >= 75) { head = W + dayTxt + (set ? ' stojí za výlet' : ' stojí za budík'); sub = rise + (fog ? 'Je inverze: mlha asi do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto. ' : ''); }
+    else if (best >= 55) { head = W + dayTxt + ' vypadá slušně'; sub = rise; }
+    else if (best >= 35) { head = W + dayTxt + ' bude spíš průměrný'; sub = rise + 'Slunce nejspíš uvidíš, ale barvy budou slabší. Jiný den nebo jiné místo může vyjít líp.'; }
+    else { head = 'Na hezký ' + (set ? 'západ' : 'východ') + ' to tu ' + dayTxt + ' nevypadá'; sub = 'Podle předpovědi bude zataženo nebo mlha. Zkus jiný den nebo jiné místo.'; flat = true; }
     const canNext = best < 55 && +daySel.value < 3;
     const jump = results.length && !flat;
     $('listlabel').hidden = !results.length;
@@ -725,14 +752,16 @@ if (typeof document !== 'undefined') (function () {
     const kindTxt = { peak: 'vrchol', tower: 'rozhledna', view: 'vyhlídka' };
     const kindOf = r => r.moved ? 'volné místo pod vrcholem' : kindTxt[r.kind];
     results.forEach((r, i) => {
-      const n = i + 1, arrive = fmtTime(r.seenMs - 40 * 60000), late = r.seenMs - sun.ms > 4 * 60000;
+      const n = i + 1, arrive = fmtTime(r.seenMs - (set ? 30 : 40) * 60000), off = Math.abs(r.seenMs - sun.ms) > 4 * 60000;
+      const timeTxt = set
+        ? '<b>Buď tam do ' + arrive + '.</b> Slunce zapadne v ' + fmtTime(r.seenMs) + (off ? ' (dřív, schová se za kopec)' : '') + ', obloha se barví ještě asi do ' + fmtTime(r.seenMs + 25 * 60000) + '.'
+        : '<b>Buď tam do ' + arrive + '.</b> Obloha se barví od ' + fmtTime(r.seenMs - 30 * 60000) + ', slunce vyleze v ' + fmtTime(r.seenMs) + (off ? ' (později, stojí před ním kopec)' : '') + '.';
       const icon = L.divIcon({ className: '', iconSize: [32, 32], iconAnchor: [16, 16], html: '<div class="pin ' + qClass(r.score) + '">' + n + '</div>' });
       const gm = 'https://www.google.com/maps/dir/?api=1&destination=' + f4(r.lat) + ',' + f4(r.lon);
       r._popup = () => '<b class="t">' + n + '. ' + esc(r.name) + '</b>Skóre ' + r.score + ' ze 100, ' + grade(r.score) + '.<br>' +
-        '<b>Buď tam do ' + arrive + '.</b> Obloha se barví od ' + fmtTime(r.seenMs - 30 * 60000) + ', slunce vyleze v ' + fmtTime(r.seenMs) +
-        (late ? ' (později, stojí před ním kopec)' : '') + '.<br>' + (r.note ? esc(r.note) + '<br>' : '') + esc(r.why.join(', ')) + '.<br>' +
+        timeTxt + '<br>' + (r.note ? esc(r.note) + '<br>' : '') + esc(r.why.join(', ')) + '.<br>' +
         kindOf(r)[0].toUpperCase() + kindOf(r).slice(1) + ', ' + Math.round(r.ele) + ' m n. m., ' + r.km.toFixed(0) + ' km daleko' +
-        (r.wx.t !== null ? ', ráno ' + Math.round(r.wx.t) + ' °C' : '') + '.<br><a href="' + gm + '" target="_blank" rel="noopener">Navigovat sem</a>';
+        (r.wx.t !== null ? (set ? ', večer ' : ', ráno ') + Math.round(r.wx.t) + ' °C' : '') + '.<br><a href="' + gm + '" target="_blank" rel="noopener">Navigovat sem</a>';
       const m = L.marker([r.lat, r.lon], { icon, zIndexOffset: (20 - n) * 100 }).addTo(map).bindPopup(r._popup(), { maxWidth: 300 });
       r._marker = m;
       markers.push(m);
@@ -755,12 +784,32 @@ if (typeof document !== 'undefined') (function () {
     [...sel.options].forEach(o => {
       const b = document.createElement('button'); b.type = 'button'; b.dataset.v = o.value;
       b.textContent = o.textContent[0].toUpperCase() + o.textContent.slice(1);
-      b.onclick = () => { sel.value = o.value; run(); };
+      b.onclick = () => { sel.value = o.value; if (sel.id === 'mode') { location.hash = o.value; return; } run(); };
       seg.appendChild(b);
     });
   });
   $('form').addEventListener('submit', e => { e.preventDefault(); run(); });
-  run();
+  // which of today's events is still ahead decides whether "dnes" or "zítra" is preselected
+  function defaultDay(set) {
+    const p = new Intl.DateTimeFormat('en-CA', { timeZone: center.tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-').map(Number);
+    const ev = findSunEvent(Date.UTC(p[0], p[1] - 1, p[2]) - center.lon / 15 * 3600000, center.lat, center.lon, set);
+    return ev && ev.ms - Date.now() > 30 * 60000 ? '0' : '1';
+  }
+  function route() {
+    const m = location.hash.slice(1);
+    if (m !== 'vychod' && m !== 'zapad') { $('choose').hidden = false; return; }
+    const set = m === 'zapad';
+    $('choose').hidden = true;
+    $('mode').value = m;
+    $('title').textContent = set ? 'Západ slunce' : 'Východ slunce';
+    document.title = set ? 'Kde bude hezký západ slunce' : 'Kde bude hezký východ slunce';
+    $('day').value = defaultDay(set);
+    run();
+  }
+  document.querySelectorAll('.opt').forEach(b => b.onclick = () => { location.hash = b.dataset.mode; });
+  $('title').onclick = () => { history.replaceState(null, '', location.pathname + location.search); $('choose').hidden = false; };
+  window.addEventListener('hashchange', route);
+  route();
 })();
 </script>
 </body>
