@@ -598,8 +598,7 @@ if (typeof document !== 'undefined') (function () {
       const kind = t.natural === 'peak' ? 'peak' : t.man_made === 'tower' ? 'tower' : 'view';
       const ele = parseFloat(String(t.ele || '').replace(',', '.'));
       return { lat, lon, kind, name: t.name || (kind === 'tower' ? 'Rozhledna' : 'Vyhlídka'), ele: isFinite(ele) ? ele : null };
-    }).filter(c => c.lat != null && distKm(c0, c) <= radiusKm && !(c.kind === 'view' && /hut|shelter|přístřeš|lavičk/i.test(c.name)))
-      .map(c => c.kind === 'view' && /^rozhledna/i.test(c.name) ? { ...c, kind: 'tower' } : c);
+    }).filter(c => c.lat != null && distKm(c0, c) <= radiusKm);
   }
   function savedPlaces(key) {
     try { const s = JSON.parse(localStorage.getItem('osm:' + key)); if (s && Date.now() - s.at < 60 * 86400000) return s.list; } catch (e) {}
@@ -625,6 +624,9 @@ if (typeof document !== 'undefined') (function () {
       p.then(list => lateNames(list, key, token)).catch(() => {});
       places = await Promise.race([p.catch(() => null), sleep(7000).then(() => null)]);
     }
+    // tidy the mapped places (also ones saved earlier): drop shelters tagged as lookouts, treat "Rozhledna …" as a tower
+    if (places) places = places.filter(c => !(c.kind === 'view' && /hut|shelter|přístřeš|lavičk/i.test(c.name)))
+      .map(c => c.kind === 'view' && /^rozhledna/i.test(c.name) ? { ...c, kind: 'tower' } : c);
     const cands = places ? mergePlaces(dem, places.map(o => ({ ...o, ele: o.ele ?? T.top(o.lat, o.lon) })), 0.7) : dem;
     let minEle = 1e9;
     for (let i = 0; i < T.E.length; i += 97) if (T.E[i] < minEle) minEle = T.E[i];
