@@ -463,7 +463,11 @@ if (typeof document !== 'undefined') (function () {
     const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), ms || 30000);
     try {
       const r = await fetch(url, { ...(opts || {}), signal: ctl.signal });
-      if (r.status === 429) throw new Error('Server s počasím hlásí moc dotazů z tvé sítě. Zkus to za pár minut znovu, po hodně hledáních to může trvat až hodinu.');
+      if (r.status === 429) {
+        let why = ''; try { why = (await r.json()).reason || ''; } catch (e) {}
+        const wait = /daily/i.test(why) ? 'Dnešní limit je vyčerpaný, obnoví se o půlnoci.' : /hour/i.test(why) ? 'Hodinový limit je vyčerpaný, zkus to za hodinu.' : 'Počkej minutu a zkus to znovu.';
+        throw new Error('Bezplatný server s počasím má limit na počet dotazů z jedné sítě. ' + wait);
+      }
       if (!r.ok) throw new Error('HTTP ' + r.status + ' z ' + new URL(url).host);
       return await r.json();
     } catch (e) {
@@ -648,16 +652,19 @@ if (typeof document !== 'undefined') (function () {
     }
   }
 
+  const wxCache = new Map();
   async function weather(pts, dateStr, withProfile) {
     let vars = 'cloud_cover_low,cloud_cover_mid,cloud_cover_high';
     if (withProfile) vars += ',visibility,wind_gusts_10m,precipitation,relative_humidity_2m,temperature_2m,' +
       LEVELS.map(l => 'relative_humidity_' + l + 'hPa').join(',');
     const out = [];
     for (const part of chunk(pts, 30)) {
-      const j = await getJSON('https://api.open-meteo.com/v1/forecast?latitude=' + part.map(p => f4(p.lat)).join(',') +
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + part.map(p => f4(p.lat)).join(',') +
         '&longitude=' + part.map(p => f4(p.lon)).join(',') + '&hourly=' + vars +
-        '&start_date=' + dateStr + '&end_date=' + dateStr + '&timezone=GMT');
-      out.push(...(Array.isArray(j) ? j : [j]));
+        '&start_date=' + dateStr + '&end_date=' + dateStr + '&timezone=GMT';
+      let j = wxCache.get(url);
+      if (!j || Date.now() - j.at > 30 * 60000) { j = { at: Date.now(), data: await getJSON(url) }; wxCache.set(url, j); }
+      out.push(...(Array.isArray(j.data) ? j.data : [j.data]));
     }
     return out;
   }
