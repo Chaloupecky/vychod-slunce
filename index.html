@@ -24,8 +24,11 @@
   #map{flex:1;min-height:320px;background:#0d0f14}
   #status{color:var(--mute);font-size:13px;margin:0 0 10px}
   #status.err{color:#ff8a80}
-  .verdict{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px;background:var(--panel)}
+  .verdict{display:block;width:100%;text-align:left;border:1px solid var(--acc);border-radius:12px;padding:12px 14px;margin-bottom:12px;background:var(--panel);color:var(--text);font-weight:400;cursor:pointer}
+  .verdict span{display:block;color:var(--mute);font-size:13px}
+  .verdict:hover{background:#242836}
   .verdict b{font-size:18px;display:block;margin-bottom:4px}
+  .meta b{color:var(--text)}
   .facts{color:var(--mute);font-size:13px;margin:0;padding:0;list-style:none}
   .facts li{margin:2px 0}
   ol#list{list-style:none;margin:0;padding:0}
@@ -35,7 +38,7 @@
   .nm{font-weight:650}
   .meta{color:var(--mute);font-size:12.5px}
   .why{font-size:13px;margin-top:3px}
-  .pin{border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font:700 12px system-ui;color:#111;border:2px solid #111;box-shadow:0 1px 4px #0008}
+  .pin{border-radius:50%;width:32px;height:32px;display:grid;place-items:center;font:700 14px system-ui;color:#111;border:2px solid #111;box-shadow:0 1px 4px #0008}
   .note{color:var(--mute);font-size:12px;margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
   a{color:var(--acc)}
   .leaflet-popup-content{font:13px/1.4 system-ui;color:#111}
@@ -61,6 +64,7 @@
     <p id="status">Načítám…</p>
     <div id="verdict"></div>
     <ol id="list"></ol>
+    <p class="note"><b>Co znamená skóre:</b> 0 až 100, jak hezký východ tam čekat. 75 a víc je výborný, 55 až 74 dobrý, 35 až 54 průměr, míň je slabý. Číslo v kolečku je pořadí, barva ukazuje skóre.</p>
     <p class="note">Skóre je odhad z předpovědi počasí (Open-Meteo) a míst z OpenStreetMap. Mlhu a inverzi modely trefují jen zhruba a neví, jestli na vrcholu nestojí les, takže ráno před cestou mrkni na webkameru. Čím vzdálenější den, tím míň tomu věř.</p>
   </section>
   <div id="map"><p id="mapnote" style="padding:20px;color:#9aa1b5">Mapa se načítá… Pokud tu tenhle text zůstane, stránka běží v náhledu, který nepovolí skripty. Otevři ji v normálním prohlížeči.</p></div>
@@ -256,6 +260,17 @@ function mergePlaces(dem, places, nearKm) {
   }
   return out;
 }
+// the short list: best score, nearer places preferred, no two picks right next to each other
+function pickTop(all, n) {
+  const sorted = all.slice().sort((a, b) => (b.score - 0.4 * b.km) - (a.score - 0.4 * a.km));
+  const out = [];
+  for (const r of sorted) {
+    if (out.length >= n) break;
+    if (out.some(o => distKm(o, r) < 3)) continue;
+    out.push(r);
+  }
+  return out;
+}
 // ==CORE-END==
 
 if (typeof document !== 'undefined') (function () {
@@ -423,7 +438,7 @@ if (typeof document !== 'undefined') (function () {
   }
   // until the real names arrive, describe the top spots by the nearest village (one request a second)
   async function nameTop(results, token) {
-    for (const r of results.filter(r => r.unnamed).slice(0, 8)) {
+    for (const r of results.filter(r => r.unnamed)) {
       if (token !== runToken) return;
       try {
         const j = await getJSON('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=13&accept-language=cs&lat=' + f4(r.lat) + '&lon=' + f4(r.lon), null, 8000);
@@ -486,15 +501,20 @@ if (typeof document !== 'undefined') (function () {
           rh2m: v('relative_humidity_2m') ?? 0, t: v('temperature_2m'), profile };
         const samples = [];
         for (let d = 600; d <= 15000; d += 300) { const p = dest(s.lat, s.lon, sun.az, d); samples.push({ d, h: T.at(p.lat, p.lon) }); }
-        const eye = s.ele + (s.kind === 'tower' ? 20 : 2);
-        return { ...s, wx, ...analyse(s, wx, horizon, terrainAngle(eye, samples)), km: distKm(center, s) };
-      }).sort((a, b) => b.score - a.score || a.km - b.km);
+        const eye = s.ele + (s.kind === 'tower' ? 20 : 2), ta = terrainAngle(eye, samples);
+        // when the sun actually shows up at this spot: its own sunrise, later if a hill stands in the way
+        const own = findSunrise(startMs, s.lat, s.lon) || sun, need = Math.max(-0.833, ta - 0.57);
+        let seenMs = own.ms;
+        for (let t = own.ms; t < own.ms + 3 * 3600000; t += 60000) if (sunPos(t, s.lat, s.lon).alt >= need) { seenMs = t; break; }
+        return { ...s, wx, ...analyse(s, wx, horizon, ta), km: distKm(center, s), seenMs };
+      });
+      const top = pickTop(results, 10);
 
       if (token !== runToken) return;
-      render(results, sun, radiusKm, horizon);
-      status('Hotovo: ' + results.length + ' míst z ' + total + ' nalezených, seřazeno od nejlepšího, při shodě bližší dřív.' +
-        (named ? '' : ' Názvy míst se ještě načítají, zatím jsou to kopce z výškové mapy.'));
-      if (!named) nameTop(results, token);
+      render(top, sun, radiusKm, horizon);
+      status('Top ' + top.length + ' z ' + results.length + ' prověřených míst. Pořadí: co nejlepší východ a zároveň co nejblíž.' +
+        (named ? '' : ' Názvy kopců se ještě načítají.'));
+      if (!named) nameTop(top, token);
     } catch (e) {
       status(e.message || String(e), true);
     } finally { btn.disabled = false; }
@@ -505,45 +525,44 @@ if (typeof document !== 'undefined') (function () {
     markers.forEach(m => map.removeLayer(m)); markers = [];
     if (sunLine) map.removeLayer(sunLine);
     if (circle) map.removeLayer(circle);
-    circle = L.circle([center.lat, center.lon], { radius: radiusKm * 1000, color: '#ffb347', weight: 1, fill: false, dashArray: '4 6' }).addTo(map);
+    circle = L.circle([center.lat, center.lon], { radius: radiusKm * 1000, color: '#e8590c', weight: 1.5, fill: false, dashArray: '4 6' }).addTo(map);
     const far = dest(center.lat, center.lon, sun.az, radiusKm * 1000);
-    sunLine = L.polyline([[center.lat, center.lon], [far.lat, far.lon]], { color: '#ffb347', weight: 2 }).addTo(map)
-      .bindTooltip('směr východu slunce (' + Math.round(sun.az) + '°)');
-    map.fitBounds(circle.getBounds());
+    sunLine = L.polyline([[center.lat, center.lon], [far.lat, far.lon]], { color: '#e8590c', weight: 2 }).addTo(map)
+      .bindTooltip('tímhle směrem vyjde slunce');
+    map.fitBounds(L.latLngBounds(results.map(r => [r.lat, r.lon]).concat([[center.lat, center.lon]])).pad(0.15));
 
-    const best = results[0], good = results.filter(r => r.score >= 55).length;
-    const arrive = fmtTime(sun.ms - 35 * 60000), fog = results.find(r => r.seaBelow);
-    const head = best.score >= 75 ? 'Tohle stojí za budík' : best.score >= 55 ? 'Vypadá to slušně' : best.score >= 35 ? 'Nic moc, spíš průměr' : 'Tenhle den to nestojí za to';
-    const hzMax = Math.max(...horizon.map(h => Math.max(h.low, h.mid * 0.6)));
-    $('verdict').innerHTML = '<div class="verdict"><b>' + head + '</b><ul class="facts">' +
-      '<li>Východ slunce v ' + fmtTime(sun.ms) + ', směr ' + Math.round(sun.az) + '°. Buď na místě do ' + arrive + '.</li>' +
-      '<li>Nejlepší skóre: ' + best.score + '/100. Míst se skóre 55 a víc: ' + good + '.</li>' +
-      '<li>Obzor na východě: ' + (hzMax <= 25 ? 'čistý' : hzMax < 60 ? 'napůl' : 'zavřený') + '.</li>' +
-      (fog ? '<li>Inverze: mlha odhadem do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto.</li>' : '') +
-      '</ul></div>';
+    const best = results.reduce((a, b) => b.score > a.score ? b : a), fog = results.find(r => r.seaBelow);
+    const dayTxt = $('day').selectedOptions[0].textContent;
+    const head = best.score >= 75 ? 'stojí za budík' : best.score >= 55 ? 'vypadá slušně' : best.score >= 35 ? 'nic moc, spíš průměr' : 'za budík nestojí';
+    $('verdict').innerHTML = '<button class="verdict" id="vbtn"><b>Východ ' + dayTxt + ' ' + head + '</b>' +
+      '<span>Slunce vychází v ' + fmtTime(sun.ms) + '. ' +
+      (fog ? 'Je inverze: mlha asi do ' + Math.round(fog.fogTop / 50) * 50 + ' m, výš je čisto. ' : '') +
+      'Klikni a ukážu ti místo č. 1.</span></button>';
 
     const kindTxt = { peak: 'vrchol', tower: 'rozhledna', view: 'vyhlídka' };
     results.forEach((r, i) => {
-      const icon = L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15],
-        html: '<div class="pin" style="background:' + colourFor(r.score) + '">' + r.score + '</div>' });
-      const gm = 'https://www.google.com/maps/search/?api=1&query=' + f4(r.lat) + ',' + f4(r.lon);
-      r._popup = () => '<b>' + esc(r.name) + '</b> · ' + r.score + '/100 (' + grade(r.score) + ')<br>' + kindTxt[r.kind] + ', ' + Math.round(r.ele) + ' m, ' + r.km.toFixed(0) + ' km<br>' +
-        esc(r.why.join(', ')) + '<br>oblačnost nízká/střední/vysoká: ' + r.wx.low + '/' + r.wx.mid + '/' + r.wx.high + ' %' +
-        (r.wx.t !== null ? '<br>teplota ' + Math.round(r.wx.t) + ' °C, nárazy ' + Math.round(r.wx.gust) + ' km/h' : '') +
-        '<br><a href="' + gm + '" target="_blank" rel="noopener">otevřít v mapách</a>';
-      const m = L.marker([r.lat, r.lon], { icon, zIndexOffset: r.score * 10 }).addTo(map).bindPopup(r._popup());
+      const n = i + 1, arrive = fmtTime(r.seenMs - 40 * 60000), late = r.seenMs - sun.ms > 4 * 60000;
+      const timeTxt = 'Buď tam do ' + arrive + '. Obloha se barví od ' + fmtTime(r.seenMs - 30 * 60000) + ', slunce vyleze v ' + fmtTime(r.seenMs) +
+        (late ? ' (později, stojí před ním kopec)' : '') + '.';
+      const icon = L.divIcon({ className: '', iconSize: [32, 32], iconAnchor: [16, 16],
+        html: '<div class="pin" style="background:' + colourFor(r.score) + '">' + n + '</div>' });
+      const gm = 'https://www.google.com/maps/dir/?api=1&destination=' + f4(r.lat) + ',' + f4(r.lon);
+      r._popup = () => '<b>' + n + '. ' + esc(r.name) + '</b><br>Skóre ' + r.score + ' ze 100 · ' + grade(r.score) + '<br>' +
+        '<b>' + timeTxt + '</b><br>' + esc(r.why.join(', ')) + '<br>' + kindTxt[r.kind] + ', ' + Math.round(r.ele) + ' m n. m., ' + r.km.toFixed(0) + ' km daleko' +
+        (r.wx.t !== null ? ', ráno ' + Math.round(r.wx.t) + ' °C' : '') +
+        '<br><a href="' + gm + '" target="_blank" rel="noopener">navigovat sem</a>';
+      const m = L.marker([r.lat, r.lon], { icon, zIndexOffset: (20 - n) * 100 }).addTo(map).bindPopup(r._popup(), { maxWidth: 300 });
       r._marker = m;
       markers.push(m);
-      if (i < 12) {
-        const li = document.createElement('li');
-        li.innerHTML = '<div class="sc" style="background:' + colourFor(r.score) + '">' + r.score + '</div><div><div class="nm">' + esc(r.name) +
-          '</div><div class="meta">' + kindTxt[r.kind] + ' · ' + Math.round(r.ele) + ' m · ' + r.km.toFixed(0) + ' km · ' + grade(r.score) +
-          '</div><div class="why">' + esc(r.why.join(', ')) + '</div></div>';
-        li.onclick = () => { map.setView([r.lat, r.lon], 13); m.openPopup(); };
-        r._nm = li.querySelector('.nm');
-        $('list').appendChild(li);
-      }
+      const li = document.createElement('li');
+      li.innerHTML = '<div class="sc" style="background:' + colourFor(r.score) + '">' + n + '</div><div><div class="nm">' + esc(r.name) +
+        '</div><div class="meta"><b>' + r.score + '/100</b> · ' + grade(r.score) + ' · ' + r.km.toFixed(0) + ' km · buď tam do ' + arrive +
+        '</div><div class="why">' + esc(r.why.join(', ')) + '</div></div>';
+      li.onclick = () => { map.setView([r.lat, r.lon], 12); m.openPopup(); };
+      r._nm = li.querySelector('.nm');
+      $('list').appendChild(li);
     });
+    $('vbtn').onclick = () => { map.setView([results[0].lat, results[0].lon], 12); results[0]._marker.openPopup(); };
   }
 
   $('go').onclick = run;
